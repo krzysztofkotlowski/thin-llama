@@ -1,0 +1,41 @@
+{
+  "listen_addr": ":8080",
+  "state_dir": "/state",
+  "models_dir": "/models",
+  "llama_server_bin": "/usr/local/bin/llama-server",
+  "active": {
+    "chat": "qwen2.5:3b",
+    "embedding": "all-minilm"
+  },
+  "models": [
+    {
+      "name": "qwen2.5:3b",
+      "role": "chat",
+      "gguf_path": "/models/qwen2.5-3b-instruct-q4_k_m.gguf",
+      "source_url": "https://example.com/models/qwen2.5-3b-instruct-q4_k_m.gguf",
+      "threads": 6,
+      "context_size": 8192,
+      "gpu_layers": 0,
+      "extra_args": [
+        "--host",
+        "127.0.0.1"
+      ],
+      "port": 11435
+    },
+    {
+      "name": "all-minilm",
+      "role": "embedding",
+      "gguf_path": "/models/all-minilm.gguf",
+      "source_url": "https://example.com/models/all-minilm.gguf",
+      "embedding_dims": 384,
+      "threads": 6,
+      "context_size": 2048,
+      "gpu_layers": 0,
+      "extra_args": [
+        "--host",
+        "127.0.0.1"
+      ],
+      "port": 11436
+    }
+  ]
+}

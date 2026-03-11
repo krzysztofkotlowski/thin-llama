@@ -1,0 +1,13 @@
+services:
+  thin-llama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: thin-llama:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models
+      - ./state:/state
+      - ./config.example.json:/config/config.json:ro
+    restart: unless-stopped
