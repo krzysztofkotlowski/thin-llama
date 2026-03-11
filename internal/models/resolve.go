@@ -27,6 +27,9 @@ func ResolveForRole(requested, role string, cfg *config.Config, catalog *Catalog
 			name = cfg.Active.Embedding
 		}
 	}
+	if name == "" {
+		return config.ModelConfig{}, fmt.Errorf("no active %s model selected", role)
+	}
 	model, err := catalog.Require(name)
 	if err != nil {
 		return config.ModelConfig{}, err

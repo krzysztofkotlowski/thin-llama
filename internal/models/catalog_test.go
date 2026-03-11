@@ -56,3 +56,57 @@ func TestResolveForRoleRejectsWrongRole(t *testing.T) {
 		t.Fatal("ResolveForRole() expected wrong-role error")
 	}
 }
+
+func TestNewLoadsBuiltInCatalogWithoutExplicitModels(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       "/state",
+		ModelsDir:      "/models",
+		LlamaServerBin: "/usr/local/bin/llama-server",
+		Models:         nil,
+	}
+
+	catalog, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if _, ok := catalog.Get("qwen2.5:3b"); !ok {
+		t.Fatal("expected built-in chat model qwen2.5:3b")
+	}
+	if _, ok := catalog.Get("all-minilm"); !ok {
+		t.Fatal("expected built-in embedding model all-minilm")
+	}
+}
+
+func TestConfigModelsOverrideBuiltInCatalogByName(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       "/state",
+		ModelsDir:      "/models",
+		LlamaServerBin: "/usr/local/bin/llama-server",
+		Models: []config.ModelConfig{
+			{
+				Name:          "all-minilm",
+				Role:          "embedding",
+				GGUFPath:      "custom/all-minilm.gguf",
+				SourceURL:     "https://example.com/custom-minilm.gguf",
+				SHA256:        "abc123",
+				EmbeddingDims: 384,
+			},
+		},
+	}
+
+	catalog, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	model, ok := catalog.Get("all-minilm")
+	if !ok {
+		t.Fatal("expected overridden all-minilm model")
+	}
+	if model.GGUFPath != "custom/all-minilm.gguf" || model.SHA256 != "abc123" {
+		t.Fatalf("override not applied: %+v", model)
+	}
+}

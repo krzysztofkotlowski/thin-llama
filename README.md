@@ -2,27 +2,33 @@
 
 # thin-llama
 
-`thin-llama` is a lightweight Go wrapper around `llama.cpp` `llama-server` built for small machines that do not need the full Ollama runtime. It runs one active chat model and one active embedding model, manages them as subprocesses, and exposes a minimal Ollama-compatible API surface for existing apps.
+`thin-llama` is a lightweight Go control plane for `llama.cpp` on small machines. It supervises `llama-server` subprocesses for chat and embeddings, keeps runtime state in JSON, and exposes an Ollama-compatible API for existing apps that do not need the full Ollama runtime.
 
-The goal is narrow by design:
+The scope is intentionally narrow:
 - single binary
 - single Docker image
 - JSON config
-- local model catalog and pull flow
-- Ollama-compatible endpoints first
+- built-in curated model catalog
+- explicit `pull` then `use` workflow
+- Ollama-compatible chat and embedding endpoints first
 
-This project is intended to replace Ollama for constrained self-hosted setups where you want tighter control over model files, process lifecycle, and runtime overhead.
+It is designed for constrained self-hosted setups where you want lower runtime overhead, direct control over GGUF files, and a container that can boot empty and manage its own models.
 
-## Current API surface
+## API surface
 
+Ollama-compatible endpoints:
 - `GET /health`
 - `GET /api/tags`
 - `POST /api/chat`
 - `POST /api/embed`
 - `POST /api/pull`
+
+thin-llama management endpoints:
+- `GET /api/models`
+- `POST /api/models/active`
 - `GET /metrics`
 
-The wrapper proxies chat and embedding requests to dedicated `llama-server` subprocesses and translates responses into Ollama-like JSON.
+`/api/tags` returns only models that are already available locally. `/api/models` exposes the full merged catalog plus active/download status.
 
 ## Architecture
 
@@ -31,9 +37,42 @@ flowchart LR
     Client["Client / existing app"] --> API["thin-llama API"]
     API --> Chat["chat llama-server process"]
     API --> Embed["embedding llama-server process"]
+    API --> Catalog["built-in + user catalog"]
     API --> State["JSON state store"]
-    API --> Models["configured GGUF catalog"]
+    API --> Models["/models volume"]
 ```
+
+## Built-in catalog
+
+The image ships with a small curated catalog for low-resource machines. The current defaults are:
+- `qwen2.5:3b` for chat
+- `all-minilm` for embeddings
+
+The binary embeds this catalog and merges user overrides from [`config.local.json`](/Users/krzysztofkotlowski/Desktop/thin-llama/config.local.json) by model name.
+
+Current built-in defaults:
+
+| Model | Role | File | Notes |
+| --- | --- | --- | --- |
+| `qwen2.5:3b` | `chat` | `qwen2.5-3b-instruct-q4_k_m.gguf` | small-machine default chat model |
+| `all-minilm` | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf` | `384`-dim embedding default |
+
+## Runtime model
+
+At startup, `thin-llama`:
+1. loads `config.local.json`
+2. loads the embedded catalog
+3. merges config overrides on top of the built-in catalog
+4. loads `state.json`
+5. starts only the roles whose active model is selected and already downloaded
+
+If no models are downloaded yet, the service still boots and `/health` returns HTTP `200` with degraded per-role readiness. The control plane is available immediately, then models can be pulled and activated without editing config or restarting the API.
+
+That means a fresh container behaves like this:
+- API is up
+- `/api/models` shows the built-in catalog
+- `/api/tags` is empty
+- `/api/models/active` rejects activation until the requested model has been pulled
 
 ## Project layout
 
@@ -41,8 +80,8 @@ flowchart LR
 cmd/thin-llama          CLI entrypoint
 internal/cli            subcommands
 internal/config         JSON config loading and validation
-internal/httpapi        Ollama-compatible HTTP handlers
-internal/models         model catalog resolution
+internal/httpapi        Ollama-compatible and management HTTP handlers
+internal/models         built-in catalog + override merge
 internal/pull           local download and checksum verification
 internal/runtime        llama-server subprocess supervision
 internal/state          persistent JSON state store
@@ -51,33 +90,34 @@ internal/metrics        Prometheus metrics
 
 ## Configuration
 
-Example config: [`config.example.json`](/Users/krzysztofkotlowski/Desktop/thin-llama/config.example.json)
+Tracked default runtime config: [`config.local.json`](/Users/krzysztofkotlowski/Desktop/thin-llama/config.local.json)
 
-Key fields:
+The default config is intentionally small:
 - `listen_addr`
 - `state_dir`
 - `models_dir`
 - `llama_server_bin`
-- `active.chat`
-- `active.embedding`
-- `models[]`
+- optional `active.chat`
+- optional `active.embedding`
+- optional `models[]` overrides/additions
 
-Each configured model declares:
+`models[]` is not the only source of truth anymore. It extends or overrides the built-in catalog by name.
+
+Each model entry supports:
 - `name`
 - `role`
 - `gguf_path`
 - optional `source_url`
 - optional `sha256`
 - `embedding_dims` for embedding models
-- runtime settings such as `threads`, `context_size`, `gpu_layers`, `extra_args`, `port`
+- optional runtime knobs such as `threads`, `context_size`, `gpu_layers`, `extra_args`, `port`
 
 ## Local development
 
 Prerequisites:
 - Go `1.26.1`
-- Docker if you want the container flow
-- a `llama-server` binary available locally or through the container image
-- real GGUF files for live runtime smoke tests
+- Docker for the container flow
+- network access if you want to `pull` models
 
 Common commands:
 
@@ -89,58 +129,122 @@ make validate-config
 make run
 ```
 
-For a real local smoke test, create an untracked runtime config first:
+Direct CLI usage:
 
 ```bash
-cp config.example.json config.local.json
-mkdir -p models state
+go run ./cmd/thin-llama serve --config ./config.local.json
+go run ./cmd/thin-llama models --config ./config.local.json
+go run ./cmd/thin-llama pull --config ./config.local.json --model all-minilm
+go run ./cmd/thin-llama use --config ./config.local.json --embedding all-minilm
 ```
 
-Then update `config.local.json` so its `gguf_path` values exactly match the filenames you place in `./models`.
-
-List configured models:
+List catalog models and current state:
 
 ```bash
-go run ./cmd/thin-llama models --config ./config.example.json
+go run ./cmd/thin-llama models --config ./config.local.json
 ```
 
-Pull a configured model:
+Pull a built-in model:
 
 ```bash
-go run ./cmd/thin-llama pull --config ./config.example.json --model all-minilm
+go run ./cmd/thin-llama pull --config ./config.local.json --model all-minilm
 ```
 
-## Dockerized appliance mode
-
-The Dockerfile builds `thin-llama`, copies in `llama-server`, and starts the wrapper as PID 1 under `tini`.
-
-Volumes:
-- `/models`
-- `/state`
-- `/config`
-
-Run with Docker Compose:
+Activate pulled models:
 
 ```bash
-THIN_LLAMA_CONFIG=./config.local.json docker compose up --build
+go run ./cmd/thin-llama use --config ./config.local.json --chat qwen2.5:3b --embedding all-minilm
 ```
 
-The included compose file mounts:
-- `./models -> /models`
-- `./state -> /state`
-- `${THIN_LLAMA_CONFIG:-./config.example.json} -> /config/config.json`
+## Docker quickstart
 
-By default, Compose uses `linux/amd64` so the image matches common `llama.cpp` server binaries and x86_64 deployment targets. Override `THIN_LLAMA_PLATFORM` if you have a native image path you want to test.
+The image bakes in `config.local.json`, so it can boot with no external config mount.
 
-For a one-off image build:
+Run it as a local appliance:
+
+```bash
+docker run -d \
+  --name thin-llama \
+  -p 8080:8080 \
+  -v thin-llama-models:/models \
+  -v thin-llama-state:/state \
+  thin-llama:local
+```
+
+Or with Compose:
+
+```bash
+docker compose up --build
+```
+
+This creates two named volumes:
+- `thin-llama-models` mounted at `/models`
+- `thin-llama-state` mounted at `/state`
+
+Check the empty boot state:
+
+```bash
+curl -s http://localhost:8080/health
+curl -s http://localhost:8080/api/models
+curl -s http://localhost:8080/api/tags
+```
+
+Expected behavior before any pulls:
+- `/health` returns HTTP `200`
+- `runtime_ready` is `false`
+- `/api/models` lists the built-in catalog with `available=false`
+- `/api/tags` returns `{"models":[]}`
+
+Then pull and activate models through the API:
+
+```bash
+curl -s http://localhost:8080/api/pull \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"all-minilm"}'
+
+curl -s http://localhost:8080/api/pull \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:3b"}'
+
+curl -s http://localhost:8080/api/models/active \
+  -H 'Content-Type: application/json' \
+  -d '{"chat":"qwen2.5:3b","embedding":"all-minilm"}'
+```
+
+After that, the Ollama-compatible endpoints are ready:
+
+```bash
+curl -s http://localhost:8080/api/tags
+
+curl -s http://localhost:8080/api/embed \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"all-minilm","input":["golang","vector search"]}'
+
+curl -s http://localhost:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:3b","stream":false,"messages":[{"role":"user","content":"Reply with exactly: thin-llama ok"}]}'
+```
+
+You can also manage models through the CLI inside the running container:
+
+```bash
+docker exec thin-llama thin-llama models --config /app/config.local.json
+docker exec thin-llama thin-llama pull --config /app/config.local.json --model all-minilm
+docker exec thin-llama thin-llama use --config /app/config.local.json --embedding all-minilm
+```
+
+Build the image directly:
 
 ```bash
 docker build --platform linux/amd64 -t thin-llama:local .
 ```
 
-## Notes
+## Operational notes
 
-- The Docker image assumes the official `llama.cpp` server image publishes `/app/llama-server`.
-- The current build targets a small self-hosted appliance model, not a multi-user service.
-- Only configured catalog models can be pulled in v1. There is no remote model registry lookup.
-- `config.example.json` is illustrative. It is not a turnkey runtime config because its `source_url` values are placeholders.
+- `pull` is synchronous in v1.
+- `use` is explicit; activation does not implicitly download models.
+- `/health` reports control-plane readiness, not “both runtimes already loaded”.
+- `/api/tags` shows only installed models so Ollama-oriented clients see a realistic local inventory.
+- built-in catalog entries can be overridden by name in `config.local.json`
+- state is persisted in `/state/state.json`
+- The container is intended for local/private-network use and does not implement auth or multi-user isolation.

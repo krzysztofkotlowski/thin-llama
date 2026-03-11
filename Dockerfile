@@ -11,6 +11,7 @@ RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
+COPY config.local.json ./config.local.json
 
 ARG VERSION=dev
 ARG COMMIT=unknown
@@ -27,9 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 COPY --from=build /out/thin-llama /usr/local/bin/thin-llama
 COPY --from=llama /app/llama-server /usr/local/bin/llama-server
+COPY --from=build /src/config.local.json /app/config.local.json
 
-RUN mkdir -p /models /state /config
+RUN mkdir -p /models /state
 
 WORKDIR /app
+VOLUME ["/models", "/state"]
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/thin-llama", "serve", "--config", "/config/config.json"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/thin-llama", "serve", "--config", "/app/config.local.json"]

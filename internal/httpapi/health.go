@@ -8,9 +8,5 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	health := a.runtime.Health()
-	status := http.StatusOK
-	if !health.OK {
-		status = http.StatusServiceUnavailable
-	}
-	writeJSON(w, status, health)
+	writeJSON(w, http.StatusOK, health)
 }

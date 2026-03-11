@@ -1,11 +1,17 @@
 package models
 
 import (
+	_ "embed"
 	"fmt"
+	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/krzysztofkotlowski/thin-llama/internal/config"
 )
+
+//go:embed builtin_catalog.json
+var builtinCatalogBytes []byte
 
 type Catalog struct {
 	byName map[string]config.ModelConfig
@@ -15,11 +21,39 @@ func New(cfg *config.Config) (*Catalog, error) {
 	if err := config.Validate(cfg); err != nil {
 		return nil, err
 	}
+
+	var builtin []config.ModelConfig
+	if err := json.Unmarshal(builtinCatalogBytes, &builtin); err != nil {
+		return nil, fmt.Errorf("parse built-in catalog: %w", err)
+	}
+
 	catalog := &Catalog{
-		byName: make(map[string]config.ModelConfig, len(cfg.Models)),
+		byName: make(map[string]config.ModelConfig, len(builtin)+len(cfg.Models)),
+	}
+	for _, model := range builtin {
+		catalog.byName[model.Name] = model
 	}
 	for _, model := range cfg.Models {
 		catalog.byName[model.Name] = model
+	}
+
+	if active := strings.TrimSpace(cfg.Active.Chat); active != "" {
+		model, ok := catalog.byName[active]
+		if !ok {
+			return nil, fmt.Errorf("active.chat %q is not in the merged catalog", active)
+		}
+		if model.Role != "chat" {
+			return nil, fmt.Errorf("active.chat %q is not a chat model", active)
+		}
+	}
+	if active := strings.TrimSpace(cfg.Active.Embedding); active != "" {
+		model, ok := catalog.byName[active]
+		if !ok {
+			return nil, fmt.Errorf("active.embedding %q is not in the merged catalog", active)
+		}
+		if model.Role != "embedding" {
+			return nil, fmt.Errorf("active.embedding %q is not an embedding model", active)
+		}
 	}
 	return catalog, nil
 }

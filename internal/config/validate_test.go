@@ -43,12 +43,25 @@ func TestValidateRejectsMissingEmbeddingDims(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsMissingActiveRole(t *testing.T) {
+func TestValidateAllowsMissingActiveRole(t *testing.T) {
 	cfg := validConfig()
 	cfg.Active.Embedding = "missing"
 
-	if err := Validate(cfg); err == nil {
-		t.Fatal("Validate() expected missing active embedding error")
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+}
+
+func TestValidateAllowsEmptyCatalogAndActiveSelections(t *testing.T) {
+	cfg := &Config{
+		ListenAddr:     ":8080",
+		StateDir:       "/state",
+		ModelsDir:      "/models",
+		LlamaServerBin: "/usr/local/bin/llama-server",
+	}
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
 	}
 }
 

@@ -14,12 +14,14 @@ import (
 	"github.com/krzysztofkotlowski/thin-llama/internal/models"
 	"github.com/krzysztofkotlowski/thin-llama/internal/pull"
 	tlruntime "github.com/krzysztofkotlowski/thin-llama/internal/runtime"
+	"github.com/krzysztofkotlowski/thin-llama/internal/state"
 )
 
 type Runtime interface {
 	Health() tlruntime.HealthSnapshot
 	ChatTarget(requested string) (tlruntime.Target, error)
 	EmbeddingTarget(requested string) (tlruntime.Target, error)
+	SetActiveModels(ctx context.Context, chat string, embedding string) error
 }
 
 type Puller interface {
@@ -31,16 +33,18 @@ type App struct {
 	catalog *models.Catalog
 	runtime Runtime
 	puller  Puller
+	store   *state.Store
 	metrics *metrics.Set
 	client  *http.Client
 }
 
-func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, puller Puller, metricSet *metrics.Set) http.Handler {
+func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, puller Puller, store *state.Store, metricSet *metrics.Set) http.Handler {
 	app := &App{
 		cfg:     cfg,
 		catalog: catalog,
 		runtime: runtime,
 		puller:  puller,
+		store:   store,
 		metrics: metricSet,
 		client: &http.Client{
 			Timeout: 2 * time.Minute,
@@ -50,6 +54,8 @@ func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, pul
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.handleHealth)
 	mux.HandleFunc("/api/tags", app.handleTags)
+	mux.HandleFunc("/api/models", app.handleModels)
+	mux.HandleFunc("/api/models/active", app.handleActiveModels)
 	mux.HandleFunc("/api/chat", app.handleChat)
 	mux.HandleFunc("/api/embed", app.handleEmbed)
 	mux.HandleFunc("/api/pull", app.handlePull)

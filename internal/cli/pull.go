@@ -13,7 +13,7 @@ import (
 func runPull(args []string) int {
 	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	configPath := fs.String("config", "config.json", "path to config json")
+	configPath := fs.String("config", defaultConfigPath, "path to config json")
 	modelName := fs.String("model", "", "configured model name")
 	if err := fs.Parse(args); err != nil {
 		return 2

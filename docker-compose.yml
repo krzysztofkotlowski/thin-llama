@@ -8,7 +8,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./models:/models
-      - ./state:/state
-      - ${THIN_LLAMA_CONFIG:-./config.example.json}:/config/config.json:ro
+      - thin-llama-models:/models
+      - thin-llama-state:/state
     restart: unless-stopped
+
+volumes:
+  thin-llama-models:
+  thin-llama-state:

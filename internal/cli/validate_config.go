@@ -9,7 +9,7 @@ import (
 func runValidateConfig(args []string) int {
 	fs := flag.NewFlagSet("validate-config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	configPath := fs.String("config", "config.json", "path to config json")
+	configPath := fs.String("config", defaultConfigPath, "path to config json")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

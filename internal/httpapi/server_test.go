@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/krzysztofkotlowski/thin-llama/internal/models"
 	"github.com/krzysztofkotlowski/thin-llama/internal/pull"
 	tlruntime "github.com/krzysztofkotlowski/thin-llama/internal/runtime"
+	"github.com/krzysztofkotlowski/thin-llama/internal/state"
 )
 
 type stubRuntime struct {
@@ -23,18 +26,43 @@ type stubRuntime struct {
 	chatErr   error
 	embedding tlruntime.Target
 	embedErr  error
+	setErr    error
+	store     *state.Store
+	lastChat  string
+	lastEmbed string
 }
 
-func (s stubRuntime) Health() tlruntime.HealthSnapshot {
+func (s *stubRuntime) Health() tlruntime.HealthSnapshot {
 	return s.health
 }
 
-func (s stubRuntime) ChatTarget(string) (tlruntime.Target, error) {
+func (s *stubRuntime) ChatTarget(string) (tlruntime.Target, error) {
 	return s.chat, s.chatErr
 }
 
-func (s stubRuntime) EmbeddingTarget(string) (tlruntime.Target, error) {
+func (s *stubRuntime) EmbeddingTarget(string) (tlruntime.Target, error) {
 	return s.embedding, s.embedErr
+}
+
+func (s *stubRuntime) SetActiveModels(_ context.Context, chat string, embedding string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	s.lastChat = chat
+	s.lastEmbed = embedding
+	if s.store == nil {
+		return nil
+	}
+	_, err := s.store.Update(func(st *state.State) error {
+		if strings.TrimSpace(chat) != "" {
+			st.Active.Chat = strings.TrimSpace(chat)
+		}
+		if strings.TrimSpace(embedding) != "" {
+			st.Active.Embedding = strings.TrimSpace(embedding)
+		}
+		return nil
+	})
+	return err
 }
 
 type stubPuller struct {
@@ -46,36 +74,67 @@ func (s stubPuller) PullModel(context.Context, string) (*pull.Result, error) {
 	return s.result, s.err
 }
 
-func newTestConfig() *config.Config {
+func newTestConfig(dir string) *config.Config {
 	return &config.Config{
 		ListenAddr:     ":8080",
-		StateDir:       "/state",
-		ModelsDir:      "/models",
+		StateDir:       filepath.Join(dir, "state"),
+		ModelsDir:      dir,
 		LlamaServerBin: "/usr/local/bin/llama-server",
 		Active: config.ActiveModels{
 			Chat:      "qwen2.5:3b",
 			Embedding: "all-minilm",
 		},
 		Models: []config.ModelConfig{
-			{Name: "qwen2.5:3b", Role: "chat", GGUFPath: "/models/chat.gguf"},
-			{Name: "all-minilm", Role: "embedding", GGUFPath: "/models/embed.gguf", EmbeddingDims: 384},
+			{Name: "qwen2.5:3b", Role: "chat", GGUFPath: filepath.Join(dir, "chat.gguf")},
+			{Name: "all-minilm", Role: "embedding", GGUFPath: filepath.Join(dir, "embed.gguf"), EmbeddingDims: 384},
 		},
 	}
 }
 
-func newHandler(t *testing.T, rt stubRuntime, puller stubPuller) http.Handler {
+func newHandler(t *testing.T, rt *stubRuntime, puller stubPuller) http.Handler {
+	handler, _, _ := newHandlerWithAvailability(t, rt, puller, true, true)
+	return handler
+}
+
+func newHandlerWithAvailability(t *testing.T, rt *stubRuntime, puller stubPuller, chatAvailable bool, embedAvailable bool) (http.Handler, *state.Store, *config.Config) {
 	t.Helper()
-	catalog, err := models.New(newTestConfig())
+	dir := t.TempDir()
+	if chatAvailable {
+		if err := os.WriteFile(filepath.Join(dir, "chat.gguf"), []byte("chat"), 0o644); err != nil {
+			t.Fatalf("WriteFile(chat) unexpected error: %v", err)
+		}
+	}
+	if embedAvailable {
+		if err := os.WriteFile(filepath.Join(dir, "embed.gguf"), []byte("embed"), 0o644); err != nil {
+			t.Fatalf("WriteFile(embed) unexpected error: %v", err)
+		}
+	}
+
+	cfg := newTestConfig(dir)
+	catalog, err := models.New(cfg)
 	if err != nil {
 		t.Fatalf("models.New() unexpected error: %v", err)
 	}
-	return NewServer(newTestConfig(), catalog, rt, puller, metrics.New())
+	store := state.New(cfg.StateDir)
+	if _, err := store.Update(func(st *state.State) error {
+		st.Active.Chat = cfg.Active.Chat
+		st.Active.Embedding = cfg.Active.Embedding
+		return nil
+	}); err != nil {
+		t.Fatalf("store.Update() unexpected error: %v", err)
+	}
+	if rt == nil {
+		rt = &stubRuntime{}
+	}
+	rt.store = store
+	return NewServer(cfg, catalog, rt, puller, store, metrics.New()), store, cfg
 }
 
 func TestHealthReflectsRuntimeReadiness(t *testing.T) {
-	handler := newHandler(t, stubRuntime{
+	handler := newHandler(t, &stubRuntime{
 		health: tlruntime.HealthSnapshot{
-			OK: false,
+			OK:           true,
+			RuntimeReady: false,
 		},
 	}, stubPuller{})
 
@@ -83,13 +142,16 @@ func TestHealthReflectsRuntimeReadiness(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"runtime_ready":false`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 }
 
-func TestTagsReturnsConfiguredModels(t *testing.T) {
-	handler := newHandler(t, stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{})
+func TestTagsReturnsOnlyDownloadedModels(t *testing.T) {
+	handler, _, _ := newHandlerWithAvailability(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{}, true, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
 	rec := httptest.NewRecorder()
@@ -99,7 +161,10 @@ func TestTagsReturnsConfiguredModels(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "qwen2.5:3b") || !strings.Contains(body, "all-minilm") {
+	if !strings.Contains(body, "qwen2.5:3b") {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if strings.Contains(body, "all-minilm") {
 		t.Fatalf("unexpected body: %s", body)
 	}
 }
@@ -122,7 +187,7 @@ func TestChatNonStreamTranslatesResponse(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler := newHandler(t, stubRuntime{
+	handler := newHandler(t, &stubRuntime{
 		health: tlruntime.HealthSnapshot{OK: true},
 		chat: tlruntime.Target{
 			Model:   config.ModelConfig{Name: "qwen2.5:3b", Role: "chat"},
@@ -153,7 +218,7 @@ func TestChatStreamTranslatesSSEToNDJSON(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler := newHandler(t, stubRuntime{
+	handler := newHandler(t, &stubRuntime{
 		health: tlruntime.HealthSnapshot{OK: true},
 		chat: tlruntime.Target{
 			Model:   config.ModelConfig{Name: "qwen2.5:3b", Role: "chat"},
@@ -203,7 +268,7 @@ func TestEmbedReturnsEmbeddings(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler := newHandler(t, stubRuntime{
+	handler := newHandler(t, &stubRuntime{
 		health: tlruntime.HealthSnapshot{OK: true},
 		embedding: tlruntime.Target{
 			Model:   config.ModelConfig{Name: "all-minilm", Role: "embedding", EmbeddingDims: 384},
@@ -226,7 +291,7 @@ func TestEmbedReturnsEmbeddings(t *testing.T) {
 }
 
 func TestPullReturnsOllamaLikePayload(t *testing.T) {
-	handler := newHandler(t, stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{
+	handler := newHandler(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{
 		result: &pull.Result{
 			Model:            "all-minilm",
 			Path:             "/models/all-minilm.gguf",
@@ -245,5 +310,72 @@ func TestPullReturnsOllamaLikePayload(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"success"`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestModelsReturnsCatalogStatusAndActiveSelection(t *testing.T) {
+	handler, store, _ := newHandlerWithAvailability(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{}, true, false)
+	if _, err := store.Update(func(st *state.State) error {
+		st.Downloads["all-minilm"] = state.DownloadStatus{
+			ModelName: "all-minilm",
+			Status:    "missing",
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("store.Update() unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"chat":"qwen2.5:3b"`) || !strings.Contains(body, `"embedding":"all-minilm"`) {
+		t.Fatalf("unexpected active payload: %s", body)
+	}
+	if !strings.Contains(body, `"name":"qwen2.5:3b"`) || !strings.Contains(body, `"available":true`) {
+		t.Fatalf("unexpected chat model payload: %s", body)
+	}
+	if !strings.Contains(body, `"name":"all-minilm"`) || !strings.Contains(body, `"download_status":"missing"`) {
+		t.Fatalf("unexpected embedding model payload: %s", body)
+	}
+}
+
+func TestActiveModelsEndpointDelegatesAndPersistsState(t *testing.T) {
+	rt := &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}
+	handler := newHandler(t, rt, stubPuller{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/models/active", strings.NewReader(`{"chat":"qwen2.5:3b","embedding":"all-minilm"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rt.lastChat != "qwen2.5:3b" || rt.lastEmbed != "all-minilm" {
+		t.Fatalf("SetActiveModels() received chat=%q embedding=%q", rt.lastChat, rt.lastEmbed)
+	}
+	if !strings.Contains(rec.Body.String(), `"chat":"qwen2.5:3b"`) || !strings.Contains(rec.Body.String(), `"embedding":"all-minilm"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestActiveModelsEndpointReturnsValidationError(t *testing.T) {
+	handler := newHandler(t, &stubRuntime{
+		health: tlruntime.HealthSnapshot{OK: true},
+		setErr: context.DeadlineExceeded,
+	}, stubPuller{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/models/active", strings.NewReader(`{"chat":"qwen2.5:3b"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }

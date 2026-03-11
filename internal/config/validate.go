@@ -21,15 +21,6 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.LlamaServerBin) == "" {
 		return fmt.Errorf("llama_server_bin is required")
 	}
-	if strings.TrimSpace(cfg.Active.Chat) == "" {
-		return fmt.Errorf("active.chat is required")
-	}
-	if strings.TrimSpace(cfg.Active.Embedding) == "" {
-		return fmt.Errorf("active.embedding is required")
-	}
-	if len(cfg.Models) == 0 {
-		return fmt.Errorf("at least one model must be configured")
-	}
 
 	seen := make(map[string]ModelConfig, len(cfg.Models))
 	for _, model := range cfg.Models {
@@ -53,21 +44,6 @@ func Validate(cfg *Config) error {
 			return fmt.Errorf("model %s requires gguf_path or source_url", name)
 		}
 		seen[name] = model
-	}
-
-	chat, ok := seen[cfg.Active.Chat]
-	if !ok {
-		return fmt.Errorf("active.chat %q is not configured", cfg.Active.Chat)
-	}
-	if chat.Role != "chat" {
-		return fmt.Errorf("active.chat %q is not a chat model", cfg.Active.Chat)
-	}
-	embedding, ok := seen[cfg.Active.Embedding]
-	if !ok {
-		return fmt.Errorf("active.embedding %q is not configured", cfg.Active.Embedding)
-	}
-	if embedding.Role != "embedding" {
-		return fmt.Errorf("active.embedding %q is not an embedding model", cfg.Active.Embedding)
 	}
 	return nil
 }

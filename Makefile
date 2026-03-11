@@ -1,6 +1,6 @@
 GO ?= go
 BIN ?= thin-llama
-CONFIG ?= ./config.example.json
+CONFIG ?= ./config.local.json
 PLATFORM ?= linux/amd64
 
 .PHONY: fmt test build run validate-config models pull docker-build docker-run
