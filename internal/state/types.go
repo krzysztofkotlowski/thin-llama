@@ -22,14 +22,17 @@ type ModelState struct {
 }
 
 type ProcessState struct {
-	Role          string `json:"role"`
-	ModelName     string `json:"model_name"`
-	Port          int    `json:"port"`
-	PID           int    `json:"pid,omitempty"`
-	Running       bool   `json:"running"`
-	LastStartedAt string `json:"last_started_at,omitempty"`
-	LastExitAt    string `json:"last_exit_at,omitempty"`
-	LastError     string `json:"last_error,omitempty"`
+	Role                string `json:"role"`
+	ModelName           string `json:"model_name"`
+	Port                int    `json:"port"`
+	PID                 int    `json:"pid,omitempty"`
+	Running             bool   `json:"running"`
+	LastStartedAt       string `json:"last_started_at,omitempty"`
+	LastExitAt          string `json:"last_exit_at,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	RestartCount        int    `json:"restart_count,omitempty"`
+	RestartSuppressed   bool   `json:"restart_suppressed,omitempty"`
+	RestartSuppressedAt string `json:"restart_suppressed_at,omitempty"`
 }
 
 type DownloadStatus struct {

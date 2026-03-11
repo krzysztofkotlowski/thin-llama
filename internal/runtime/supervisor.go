@@ -15,6 +15,13 @@ import (
 	"github.com/krzysztofkotlowski/thin-llama/internal/state"
 )
 
+const (
+	rapidFailureThreshold = 15 * time.Second
+	rapidFailureWindow    = 2 * time.Minute
+	rapidFailureLimit     = 3
+	restartDelay          = 2 * time.Second
+)
+
 type Target struct {
 	Model   config.ModelConfig
 	BaseURL string
@@ -22,12 +29,14 @@ type Target struct {
 }
 
 type RoleHealth struct {
-	Role      string `json:"role"`
-	ModelName string `json:"model_name,omitempty"`
-	Port      int    `json:"port"`
-	Running   bool   `json:"running"`
-	Ready     bool   `json:"ready"`
-	LastError string `json:"last_error,omitempty"`
+	Role              string `json:"role"`
+	ModelName         string `json:"model_name,omitempty"`
+	Port              int    `json:"port"`
+	Running           bool   `json:"running"`
+	Ready             bool   `json:"ready"`
+	LastError         string `json:"last_error,omitempty"`
+	RestartCount      int    `json:"restart_count,omitempty"`
+	RestartSuppressed bool   `json:"restart_suppressed,omitempty"`
 }
 
 type HealthSnapshot struct {
@@ -37,6 +46,13 @@ type HealthSnapshot struct {
 	Embedding    RoleHealth `json:"embedding"`
 }
 
+type restartTracker struct {
+	Count        int
+	FirstFailure time.Time
+	Suppressed   bool
+	SuppressedAt time.Time
+}
+
 type Supervisor struct {
 	cfg     *config.Config
 	catalog *models.Catalog
@@ -44,16 +60,18 @@ type Supervisor struct {
 
 	mu       sync.RWMutex
 	process  map[string]*ManagedProcess
+	failures map[string]restartTracker
 	stopping bool
 	wg       sync.WaitGroup
 }
 
 func NewSupervisor(cfg *config.Config, catalog *models.Catalog, store *state.Store) *Supervisor {
 	return &Supervisor{
-		cfg:     cfg,
-		catalog: catalog,
-		store:   store,
-		process: make(map[string]*ManagedProcess, 2),
+		cfg:      cfg,
+		catalog:  catalog,
+		store:    store,
+		process:  make(map[string]*ManagedProcess, 2),
+		failures: make(map[string]restartTracker, 2),
 	}
 }
 
@@ -208,6 +226,8 @@ func (s *Supervisor) switchRole(ctx context.Context, role, name string) error {
 		return fmt.Errorf("model %q is not downloaded at %s; pull it first", model.Name, path)
 	}
 
+	s.clearRestartState(role)
+
 	oldProc := s.currentProcess(role)
 	var oldModel config.ModelConfig
 	var oldPort int
@@ -255,6 +275,7 @@ func (s *Supervisor) startRole(ctx context.Context, role string, model config.Mo
 
 	s.mu.Lock()
 	s.process[role] = proc
+	s.failures[role] = restartTracker{}
 	s.mu.Unlock()
 
 	_, err := s.store.Update(func(st *state.State) error {
@@ -266,13 +287,16 @@ func (s *Supervisor) startRole(ctx context.Context, role string, model config.Mo
 			UpdatedAt:      nowString(),
 		}
 		st.Processes[role] = state.ProcessState{
-			Role:          role,
-			ModelName:     model.Name,
-			Port:          port,
-			PID:           proc.PID(),
-			Running:       true,
-			LastStartedAt: proc.LastStartedAt().Format(time.RFC3339Nano),
-			LastError:     "",
+			Role:                role,
+			ModelName:           model.Name,
+			Port:                port,
+			PID:                 proc.PID(),
+			Running:             true,
+			LastStartedAt:       proc.LastStartedAt().Format(time.RFC3339Nano),
+			LastError:           "",
+			RestartCount:        0,
+			RestartSuppressed:   false,
+			RestartSuppressedAt: "",
 		}
 		return nil
 	})
@@ -297,8 +321,8 @@ func (s *Supervisor) watchProcess(role string, proc *ManagedProcess) {
 			err = nil
 		}
 		proc.MarkExited(err)
-		s.recordExit(role, proc, err)
-		if proc.WasStopped() || s.isStopping() {
+		suppressed := s.recordExit(role, proc, err)
+		if proc.WasStopped() || s.isStopping() || suppressed {
 			return
 		}
 		s.restartLoop(role, proc.Model(), proc.Port())
@@ -307,7 +331,7 @@ func (s *Supervisor) watchProcess(role string, proc *ManagedProcess) {
 
 func (s *Supervisor) restartLoop(role string, model config.ModelConfig, port int) {
 	for {
-		if s.isStopping() {
+		if s.isStopping() || s.isRestartSuppressed(role) {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -316,8 +340,10 @@ func (s *Supervisor) restartLoop(role string, model config.ModelConfig, port int
 		if err == nil {
 			return
 		}
-		s.recordRoleError(role, model.Name, port, err)
-		time.Sleep(2 * time.Second)
+		if s.recordRestartFailure(role, model.Name, port, err) {
+			return
+		}
+		time.Sleep(restartDelay)
 	}
 }
 
@@ -369,14 +395,43 @@ func (s *Supervisor) targetForRole(role, requested string) (Target, error) {
 	}, nil
 }
 
-func (s *Supervisor) recordExit(role string, proc *ManagedProcess, err error) {
-	s.mu.RLock()
+func (s *Supervisor) recordExit(role string, proc *ManagedProcess, err error) bool {
+	s.mu.Lock()
 	currentProc := s.process[role]
-	s.mu.RUnlock()
 	if currentProc != nil && currentProc != proc {
-		return
+		s.mu.Unlock()
+		return false
 	}
+	delete(s.process, role)
+	tracker := s.failures[role]
+	startedAt := proc.LastStartedAt()
+	exitedAt := proc.LastExitedAt()
+	rapid := !startedAt.IsZero() && !exitedAt.IsZero() && exitedAt.Sub(startedAt) <= rapidFailureThreshold
+	if rapid {
+		if tracker.FirstFailure.IsZero() || exitedAt.Sub(tracker.FirstFailure) > rapidFailureWindow {
+			tracker = restartTracker{Count: 1, FirstFailure: exitedAt}
+		} else {
+			tracker.Count++
+		}
+		if tracker.Count >= rapidFailureLimit {
+			tracker.Suppressed = true
+			if tracker.SuppressedAt.IsZero() {
+				tracker.SuppressedAt = exitedAt
+			}
+		}
+	} else {
+		tracker = restartTracker{}
+	}
+	s.failures[role] = tracker
+	s.mu.Unlock()
 
+	lastError := ""
+	if err != nil {
+		lastError = err.Error()
+	}
+	if tracker.Suppressed {
+		lastError = fmt.Sprintf("restart suppressed after %d rapid failures: %s", tracker.Count, lastError)
+	}
 	_, _ = s.store.Update(func(st *state.State) error {
 		current := st.Processes[role]
 		current.Role = role
@@ -385,12 +440,62 @@ func (s *Supervisor) recordExit(role string, proc *ManagedProcess, err error) {
 		current.PID = proc.PID()
 		current.Running = false
 		current.LastExitAt = nowString()
-		if err != nil {
-			current.LastError = err.Error()
+		current.LastError = lastError
+		current.RestartCount = tracker.Count
+		current.RestartSuppressed = tracker.Suppressed
+		if tracker.SuppressedAt.IsZero() {
+			current.RestartSuppressedAt = ""
+		} else {
+			current.RestartSuppressedAt = tracker.SuppressedAt.Format(time.RFC3339Nano)
 		}
 		st.Processes[role] = current
 		return nil
 	})
+	return tracker.Suppressed
+}
+
+func (s *Supervisor) recordRestartFailure(role, modelName string, port int, err error) bool {
+	s.mu.Lock()
+	tracker := s.failures[role]
+	now := time.Now().UTC()
+	if tracker.FirstFailure.IsZero() || now.Sub(tracker.FirstFailure) > rapidFailureWindow {
+		tracker = restartTracker{Count: 1, FirstFailure: now}
+	} else {
+		tracker.Count++
+	}
+	if tracker.Count >= rapidFailureLimit {
+		tracker.Suppressed = true
+		if tracker.SuppressedAt.IsZero() {
+			tracker.SuppressedAt = now
+		}
+	}
+	s.failures[role] = tracker
+	delete(s.process, role)
+	s.mu.Unlock()
+
+	lastError := err.Error()
+	if tracker.Suppressed {
+		lastError = fmt.Sprintf("restart suppressed after %d rapid failures: %s", tracker.Count, lastError)
+	}
+	_, _ = s.store.Update(func(st *state.State) error {
+		current := st.Processes[role]
+		current.Role = role
+		current.ModelName = modelName
+		current.Port = port
+		current.Running = false
+		current.LastExitAt = nowString()
+		current.LastError = lastError
+		current.RestartCount = tracker.Count
+		current.RestartSuppressed = tracker.Suppressed
+		if tracker.SuppressedAt.IsZero() {
+			current.RestartSuppressedAt = ""
+		} else {
+			current.RestartSuppressedAt = tracker.SuppressedAt.Format(time.RFC3339Nano)
+		}
+		st.Processes[role] = current
+		return nil
+	})
+	return tracker.Suppressed
 }
 
 func (s *Supervisor) recordRoleError(role, modelName string, port int, err error) {
@@ -409,6 +514,26 @@ func (s *Supervisor) recordRoleError(role, modelName string, port int, err error
 	})
 }
 
+func (s *Supervisor) clearRestartState(role string) {
+	s.mu.Lock()
+	delete(s.failures, role)
+	s.mu.Unlock()
+	_, _ = s.store.Update(func(st *state.State) error {
+		current := st.Processes[role]
+		current.RestartCount = 0
+		current.RestartSuppressed = false
+		current.RestartSuppressedAt = ""
+		st.Processes[role] = current
+		return nil
+	})
+}
+
+func (s *Supervisor) isRestartSuppressed(role string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.failures[role].Suppressed
+}
+
 func (s *Supervisor) currentProcess(role string) *ManagedProcess {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -425,12 +550,14 @@ func buildRoleHealth(role, activeName string, stored state.ProcessState, proc *M
 	if proc != nil {
 		ready := proc.Running() && checkPort(proc.Port())
 		return RoleHealth{
-			Role:      role,
-			ModelName: proc.Model().Name,
-			Port:      proc.Port(),
-			Running:   proc.Running(),
-			Ready:     ready,
-			LastError: proc.LastError(),
+			Role:              role,
+			ModelName:         proc.Model().Name,
+			Port:              proc.Port(),
+			Running:           proc.Running(),
+			Ready:             ready,
+			LastError:         proc.LastError(),
+			RestartCount:      stored.RestartCount,
+			RestartSuppressed: stored.RestartSuppressed,
 		}
 	}
 
@@ -439,12 +566,14 @@ func buildRoleHealth(role, activeName string, stored state.ProcessState, proc *M
 		modelName = stored.ModelName
 	}
 	return RoleHealth{
-		Role:      role,
-		ModelName: modelName,
-		Port:      stored.Port,
-		Running:   stored.Running,
-		Ready:     false,
-		LastError: stored.LastError,
+		Role:              role,
+		ModelName:         modelName,
+		Port:              stored.Port,
+		Running:           stored.Running,
+		Ready:             false,
+		LastError:         stored.LastError,
+		RestartCount:      stored.RestartCount,
+		RestartSuppressed: stored.RestartSuppressed,
 	}
 }
 

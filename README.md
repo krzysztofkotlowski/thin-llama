@@ -63,6 +63,17 @@ Current built-in defaults:
 | `qwen2.5:3b` | `chat`      | `qwen2.5-3b-instruct-q4_k_m.gguf` | small-machine default chat model |
 | `all-minilm` | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf`    | `384`-dim embedding default      |
 
+The built-in runtime profile is intentionally conservative for small CPU-only hosts:
+
+- lower thread count
+- reduced context size
+- one server slot per role
+- prompt cache disabled
+- warmup disabled
+- smaller batch and ubatch sizes
+
+These defaults trade peak throughput for stability on machines like 6-core / 16 GB home servers.
+
 ## Runtime model
 
 At startup, `thin-llama`:

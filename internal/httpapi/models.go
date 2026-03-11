@@ -24,6 +24,7 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	health := a.runtime.Health()
 
 	modelsOut := make([]map[string]any, 0, len(a.catalog.All()))
 	for _, model := range a.catalog.All() {
@@ -35,7 +36,26 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 
 		downloadStatus := current.Downloads[model.Name]
 		modelState := current.Models[model.Name]
+		processState := current.Processes[model.Role]
 		active := (model.Role == "chat" && current.Active.Chat == model.Name) || (model.Role == "embedding" && current.Active.Embedding == model.Name)
+
+		runtimeRunning := processState.ModelName == model.Name && processState.Running
+		runtimeReady := false
+		runtimeError := ""
+		if model.Role == "chat" && health.Chat.ModelName == model.Name {
+			runtimeRunning = health.Chat.Running
+			runtimeReady = health.Chat.Ready
+			runtimeError = health.Chat.LastError
+		}
+		if model.Role == "embedding" && health.Embedding.ModelName == model.Name {
+			runtimeRunning = health.Embedding.Running
+			runtimeReady = health.Embedding.Ready
+			runtimeError = health.Embedding.LastError
+		}
+		if runtimeError == "" && processState.ModelName == model.Name {
+			runtimeError = processState.LastError
+		}
+
 		modelsOut = append(modelsOut, map[string]any{
 			"name":               model.Name,
 			"role":               model.Role,
@@ -45,6 +65,11 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 			"download_status":    downloadStatus.Status,
 			"download_error":     downloadStatus.LastError,
 			"last_downloaded_at": modelState.LastDownloadedAt,
+			"runtime_running":    runtimeRunning,
+			"runtime_ready":      runtimeReady,
+			"runtime_error":      runtimeError,
+			"restart_count":      processState.RestartCount,
+			"restart_suppressed": processState.ModelName == model.Name && processState.RestartSuppressed,
 		})
 	}
 
