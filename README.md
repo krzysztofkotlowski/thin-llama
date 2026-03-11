@@ -77,6 +77,7 @@ Prerequisites:
 - Go `1.26.1`
 - Docker if you want the container flow
 - a `llama-server` binary available locally or through the container image
+- real GGUF files for live runtime smoke tests
 
 Common commands:
 
@@ -87,6 +88,15 @@ make test
 make validate-config
 make run
 ```
+
+For a real local smoke test, create an untracked runtime config first:
+
+```bash
+cp config.example.json config.local.json
+mkdir -p models state
+```
+
+Then update `config.local.json` so its `gguf_path` values exactly match the filenames you place in `./models`.
 
 List configured models:
 
@@ -112,16 +122,25 @@ Volumes:
 Run with Docker Compose:
 
 ```bash
-docker compose up --build
+THIN_LLAMA_CONFIG=./config.local.json docker compose up --build
 ```
 
 The included compose file mounts:
 - `./models -> /models`
 - `./state -> /state`
-- `./config.example.json -> /config/config.json`
+- `${THIN_LLAMA_CONFIG:-./config.example.json} -> /config/config.json`
+
+By default, Compose uses `linux/amd64` so the image matches common `llama.cpp` server binaries and x86_64 deployment targets. Override `THIN_LLAMA_PLATFORM` if you have a native image path you want to test.
+
+For a one-off image build:
+
+```bash
+docker build --platform linux/amd64 -t thin-llama:local .
+```
 
 ## Notes
 
 - The Docker image assumes the official `llama.cpp` server image publishes `/app/llama-server`.
 - The current build targets a small self-hosted appliance model, not a multi-user service.
 - Only configured catalog models can be pulled in v1. There is no remote model registry lookup.
+- `config.example.json` is illustrative. It is not a turnkey runtime config because its `source_url` values are placeholders.

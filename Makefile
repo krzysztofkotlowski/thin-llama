@@ -1,6 +1,7 @@
 GO ?= go
 BIN ?= thin-llama
 CONFIG ?= ./config.example.json
+PLATFORM ?= linux/amd64
 
 .PHONY: fmt test build run validate-config models pull docker-build docker-run
 
@@ -28,7 +29,7 @@ pull:
 	$(GO) run ./cmd/thin-llama pull --config $(CONFIG) --model "$(MODEL)"
 
 docker-build:
-	docker build -t $(BIN):latest .
+	docker build --platform $(PLATFORM) -t $(BIN):latest .
 
 docker-run:
-	docker compose up --build
+	THIN_LLAMA_CONFIG=$(CONFIG) THIN_LLAMA_PLATFORM=$(PLATFORM) docker compose up --build

@@ -1,9 +1,12 @@
 ARG GO_VERSION=1.26.1
 
-FROM golang:${GO_VERSION}-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 
-COPY go.mod ./
+ARG TARGETOS
+ARG TARGETARCH
+
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd ./cmd
@@ -13,7 +16,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
     -o /out/thin-llama ./cmd/thin-llama
 

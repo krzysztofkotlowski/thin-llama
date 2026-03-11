@@ -1,5 +1,6 @@
 services:
   thin-llama:
+    platform: ${THIN_LLAMA_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,5 +10,5 @@ services:
     volumes:
       - ./models:/models
       - ./state:/state
-      - ./config.example.json:/config/config.json:ro
+      - ${THIN_LLAMA_CONFIG:-./config.example.json}:/config/config.json:ro
     restart: unless-stopped
