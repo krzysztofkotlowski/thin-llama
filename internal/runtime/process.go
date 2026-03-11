@@ -15,11 +15,12 @@ import (
 )
 
 type ManagedProcess struct {
-	role      string
-	model     config.ModelConfig
-	modelPath string
-	binary    string
-	port      int
+	role           string
+	model          config.ModelConfig
+	modelPath      string
+	binary         string
+	port           int
+	startupTimeout time.Duration
 
 	mu        sync.RWMutex
 	cmd       *exec.Cmd
@@ -31,13 +32,17 @@ type ManagedProcess struct {
 	stopping  bool
 }
 
-func NewManagedProcess(role string, model config.ModelConfig, modelPath, binary string, port int) *ManagedProcess {
+func NewManagedProcess(role string, model config.ModelConfig, modelPath, binary string, port int, startupTimeout time.Duration) *ManagedProcess {
+	if startupTimeout <= 0 {
+		startupTimeout = 60 * time.Second
+	}
 	return &ManagedProcess{
-		role:      role,
-		model:     model,
-		modelPath: modelPath,
-		binary:    binary,
-		port:      port,
+		role:           role,
+		model:          model,
+		modelPath:      modelPath,
+		binary:         binary,
+		port:           port,
+		startupTimeout: startupTimeout,
 	}
 }
 
@@ -71,7 +76,7 @@ func (p *ManagedProcess) Start(ctx context.Context) error {
 		close(done)
 	}()
 
-	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, p.startupTimeout)
 	defer cancel()
 	if err := waitForTCP(waitCtx, p.port); err != nil {
 		_ = terminateProcess(cmd, done, 2*time.Second)

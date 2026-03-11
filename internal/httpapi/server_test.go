@@ -406,6 +406,9 @@ func TestModelsReturnsCatalogStatusAndActiveSelection(t *testing.T) {
 	if !strings.Contains(body, `"name":"all-minilm"`) || !strings.Contains(body, `"download_status":"missing"`) {
 		t.Fatalf("unexpected embedding model payload: %s", body)
 	}
+	if !strings.Contains(body, `"embedding_dims":384`) {
+		t.Fatalf("expected embedding dims in payload: %s", body)
+	}
 }
 
 func TestActiveModelsEndpointDelegatesAndPersistsState(t *testing.T) {

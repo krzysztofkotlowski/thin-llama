@@ -59,6 +59,7 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 		modelsOut = append(modelsOut, map[string]any{
 			"name":               model.Name,
 			"role":               model.Role,
+			"embedding_dims":     model.EmbeddingDims,
 			"available":          available,
 			"active":             active,
 			"path":               path,

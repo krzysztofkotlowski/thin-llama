@@ -33,7 +33,7 @@ thin-llama management endpoints:
 - `POST /api/models/active`
 - `GET /metrics`
 
-`/api/runtime` identifies the runtime, build version, Git ref, and supported capabilities. `/api/tags` returns only models that are already available locally. `/api/models` exposes the full merged catalog plus active/download status.
+`/api/runtime` identifies the runtime, build version, Git ref, and supported capabilities. `/api/tags` returns only models that are already available locally. `/api/models` exposes the full merged catalog plus active/download/runtime status, including embedding dimensions for embedding models.
 
 ## Architecture
 
@@ -117,6 +117,7 @@ The default config is:
 - `state_dir`
 - `models_dir`
 - `llama_server_bin`
+- `startup_timeout_seconds`
 - optional `active.chat`
 - optional `active.embedding`
 - optional `models[]` overrides/additions
@@ -132,6 +133,8 @@ Each model entry supports:
 - optional `sha256`
 - `embedding_dims` for embedding models
 - optional runtime knobs such as `threads`, `context_size`, `gpu_layers`, `extra_args`, `port`
+
+`startup_timeout_seconds` defaults to `60` and controls how long thin-llama waits for each `llama-server` subprocess to become reachable on slower CPU-only hosts.
 
 ## Local development
 

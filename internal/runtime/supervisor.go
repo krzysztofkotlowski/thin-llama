@@ -268,7 +268,7 @@ func (s *Supervisor) startRole(ctx context.Context, role string, model config.Mo
 		return fmt.Errorf("%s model %q is not available at %s: %w", role, model.Name, modelPath, err)
 	}
 
-	proc := NewManagedProcess(role, model, modelPath, s.cfg.LlamaServerBin, port)
+	proc := NewManagedProcess(role, model, modelPath, s.cfg.LlamaServerBin, port, s.cfg.StartupTimeout())
 	if err := proc.Start(ctx); err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (s *Supervisor) restartLoop(role string, model config.ModelConfig, port int
 		if s.isStopping() || s.isRestartSuppressed(role) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.StartupTimeout())
 		err := s.startRole(ctx, role, model, port)
 		cancel()
 		if err == nil {
@@ -376,7 +376,7 @@ func (s *Supervisor) targetForRole(role, requested string) (Target, error) {
 	proc := s.process[role]
 	s.mu.RUnlock()
 	if proc == nil || !proc.Ready() || proc.Model().Name != targetName {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.StartupTimeout())
 		defer cancel()
 		if err := s.switchRole(ctx, role, targetName); err != nil {
 			return Target{}, err

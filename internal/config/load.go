@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	defaultListenAddr = ":8080"
-	defaultStateDir   = "./state"
-	defaultModelsDir  = "./models"
-	defaultServerBin  = "llama-server"
+	defaultListenAddr            = ":8080"
+	defaultStateDir              = "./state"
+	defaultModelsDir             = "./models"
+	defaultServerBin             = "llama-server"
+	defaultStartupTimeoutSeconds = 60
 )
 
 func Load(path string) (*Config, error) {
@@ -35,6 +36,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.LlamaServerBin == "" {
 		cfg.LlamaServerBin = defaultServerBin
+	}
+	if cfg.StartupTimeoutSeconds <= 0 {
+		cfg.StartupTimeoutSeconds = defaultStartupTimeoutSeconds
 	}
 
 	applyEnvOverride(&cfg.ListenAddr, "THIN_LLAMA_LISTEN_ADDR")
