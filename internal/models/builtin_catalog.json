@@ -4,7 +4,7 @@
     "role": "chat",
     "gguf_path": "qwen2.5-3b-instruct-q4_k_m.gguf",
     "source_url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true",
-    "sha256": "62672526f12fbe72469f791a54c3357ca0ac77d82ee7c5660b0c0df7a692db07",
+    "sha256": "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
     "threads": 6,
     "context_size": 8192,
     "gpu_layers": 0,

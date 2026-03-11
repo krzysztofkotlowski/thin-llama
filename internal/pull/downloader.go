@@ -52,6 +52,29 @@ func ResolveModelPath(cfg *config.Config, model config.ModelConfig) string {
 	return filepath.Join(cfg.ModelsDir, path)
 }
 
+func (m *Manager) markDownloadError(model config.ModelConfig, path string, cause error) {
+	if cause == nil {
+		return
+	}
+	updatedAt := nowString()
+	_, _ = m.store.Update(func(st *state.State) error {
+		st.Models[model.Name] = state.ModelState{
+			Name:           model.Name,
+			LocalPath:      path,
+			Available:      false,
+			LastChecksumOK: false,
+			UpdatedAt:      updatedAt,
+		}
+		st.Downloads[model.Name] = state.DownloadStatus{
+			ModelName: model.Name,
+			Status:    "error",
+			UpdatedAt: updatedAt,
+			LastError: cause.Error(),
+		}
+		return nil
+	})
+}
+
 func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, error) {
 	model, err := m.catalog.Require(modelName)
 	if err != nil {
@@ -65,6 +88,7 @@ func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, err
 
 	if _, err := os.Stat(path); err == nil {
 		if err := VerifyFileSHA256(path, model.SHA256); err != nil {
+			m.markDownloadError(model, path, err)
 			return nil, err
 		}
 		now := nowString()
@@ -95,10 +119,14 @@ func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, err
 
 	sourceURL := strings.TrimSpace(model.SourceURL)
 	if sourceURL == "" {
-		return nil, fmt.Errorf("model %q is missing locally and has no source_url", model.Name)
+		err := fmt.Errorf("model %q is missing locally and has no source_url", model.Name)
+		m.markDownloadError(model, path, err)
+		return nil, err
 	}
 	if _, err := url.ParseRequestURI(sourceURL); err != nil {
-		return nil, fmt.Errorf("model %q has invalid source_url: %w", model.Name, err)
+		wrapped := fmt.Errorf("model %q has invalid source_url: %w", model.Name, err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 
 	if _, err := m.store.Update(func(st *state.State) error {
@@ -114,49 +142,55 @@ func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, err
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create download request: %w", err)
+		wrapped := fmt.Errorf("create download request: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("download model: %w", err)
+		wrapped := fmt.Errorf("download model: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download model: unexpected status %s", resp.Status)
+		wrapped := fmt.Errorf("download model: unexpected status %s", resp.Status)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 
 	tempPath := path + ".download"
 	file, err := os.Create(tempPath)
 	if err != nil {
-		return nil, fmt.Errorf("create temp model file: %w", err)
+		wrapped := fmt.Errorf("create temp model file: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 	if _, err := io.Copy(file, resp.Body); err != nil {
 		_ = file.Close()
 		_ = os.Remove(tempPath)
-		return nil, fmt.Errorf("write model file: %w", err)
+		wrapped := fmt.Errorf("write model file: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tempPath)
-		return nil, fmt.Errorf("close temp model file: %w", err)
+		wrapped := fmt.Errorf("close temp model file: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 
 	if err := VerifyFileSHA256(tempPath, model.SHA256); err != nil {
 		_ = os.Remove(tempPath)
-		_, _ = m.store.Update(func(st *state.State) error {
-			st.Downloads[model.Name] = state.DownloadStatus{
-				ModelName: model.Name,
-				Status:    "error",
-				UpdatedAt: nowString(),
-				LastError: err.Error(),
-			}
-			return nil
-		})
+		m.markDownloadError(model, path, err)
 		return nil, err
 	}
 
 	if err := os.Rename(tempPath, path); err != nil {
 		_ = os.Remove(tempPath)
-		return nil, fmt.Errorf("activate model file: %w", err)
+		wrapped := fmt.Errorf("activate model file: %w", err)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
 	}
 
 	doneAt := nowString()
