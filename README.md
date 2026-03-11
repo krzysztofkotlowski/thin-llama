@@ -4,7 +4,8 @@
 
 `thin-llama` is a lightweight Go control plane for `llama.cpp` on small machines. It supervises `llama-server` subprocesses for chat and embeddings, keeps runtime state in JSON, and exposes an Ollama-compatible API for existing apps that do not need the full Ollama runtime.
 
-The scope is intentionally narrow:
+The scope is:
+
 - single binary
 - single Docker image
 - JSON config
@@ -17,6 +18,7 @@ It is designed for constrained self-hosted setups where you want lower runtime o
 ## API surface
 
 Ollama-compatible endpoints:
+
 - `GET /health`
 - `GET /api/tags`
 - `POST /api/chat`
@@ -24,6 +26,7 @@ Ollama-compatible endpoints:
 - `POST /api/pull`
 
 thin-llama management endpoints:
+
 - `GET /api/models`
 - `POST /api/models/active`
 - `GET /metrics`
@@ -45,6 +48,7 @@ flowchart LR
 ## Built-in catalog
 
 The image ships with a small curated catalog for low-resource machines. The current defaults are:
+
 - `qwen2.5:3b` for chat
 - `all-minilm` for embeddings
 
@@ -52,14 +56,15 @@ The binary embeds this catalog and merges user overrides from [`config.local.jso
 
 Current built-in defaults:
 
-| Model | Role | File | Notes |
-| --- | --- | --- | --- |
-| `qwen2.5:3b` | `chat` | `qwen2.5-3b-instruct-q4_k_m.gguf` | small-machine default chat model |
-| `all-minilm` | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf` | `384`-dim embedding default |
+| Model        | Role        | File                              | Notes                            |
+| ------------ | ----------- | --------------------------------- | -------------------------------- |
+| `qwen2.5:3b` | `chat`      | `qwen2.5-3b-instruct-q4_k_m.gguf` | small-machine default chat model |
+| `all-minilm` | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf`    | `384`-dim embedding default      |
 
 ## Runtime model
 
 At startup, `thin-llama`:
+
 1. loads `config.local.json`
 2. loads the embedded catalog
 3. merges config overrides on top of the built-in catalog
@@ -69,6 +74,7 @@ At startup, `thin-llama`:
 If no models are downloaded yet, the service still boots and `/health` returns HTTP `200` with degraded per-role readiness. The control plane is available immediately, then models can be pulled and activated without editing config or restarting the API.
 
 That means a fresh container behaves like this:
+
 - API is up
 - `/api/models` shows the built-in catalog
 - `/api/tags` is empty
@@ -92,7 +98,8 @@ internal/metrics        Prometheus metrics
 
 Tracked default runtime config: [`config.local.json`](/Users/krzysztofkotlowski/Desktop/thin-llama/config.local.json)
 
-The default config is intentionally small:
+The default config is:
+
 - `listen_addr`
 - `state_dir`
 - `models_dir`
@@ -104,6 +111,7 @@ The default config is intentionally small:
 `models[]` is not the only source of truth anymore. It extends or overrides the built-in catalog by name.
 
 Each model entry supports:
+
 - `name`
 - `role`
 - `gguf_path`
@@ -115,6 +123,7 @@ Each model entry supports:
 ## Local development
 
 Prerequisites:
+
 - Go `1.26.1`
 - Docker for the container flow
 - network access if you want to `pull` models
@@ -178,6 +187,7 @@ docker compose up --build
 ```
 
 This creates two named volumes:
+
 - `thin-llama-models` mounted at `/models`
 - `thin-llama-state` mounted at `/state`
 
@@ -190,6 +200,7 @@ curl -s http://localhost:8080/api/tags
 ```
 
 Expected behavior before any pulls:
+
 - `/health` returns HTTP `200`
 - `runtime_ready` is `false`
 - `/api/models` lists the built-in catalog with `available=false`
