@@ -24,7 +24,7 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	health := a.runtime.Health()
+	snapshot := a.runtime.Snapshot()
 
 	modelsOut := make([]map[string]any, 0, len(a.catalog.All()))
 	for _, model := range a.catalog.All() {
@@ -36,24 +36,30 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 
 		downloadStatus := current.Downloads[model.Name]
 		modelState := current.Models[model.Name]
-		processState := current.Processes[model.Role]
-		active := (model.Role == "chat" && current.Active.Chat == model.Name) || (model.Role == "embedding" && current.Active.Embedding == model.Name)
+		active := (model.Role == "chat" && snapshot.Active.Chat == model.Name) || (model.Role == "embedding" && snapshot.Active.Embedding == model.Name)
 
-		runtimeRunning := processState.ModelName == model.Name && processState.Running
+		roleHealth := snapshot.Embedding
+		if model.Role == "chat" {
+			roleHealth = snapshot.Chat
+		}
+
+		runtimeRunning := active && roleHealth.ModelName == model.Name && roleHealth.Running
 		runtimeReady := false
 		runtimeError := ""
-		if model.Role == "chat" && health.Chat.ModelName == model.Name {
-			runtimeRunning = health.Chat.Running
-			runtimeReady = health.Chat.Ready
-			runtimeError = health.Chat.LastError
-		}
-		if model.Role == "embedding" && health.Embedding.ModelName == model.Name {
-			runtimeRunning = health.Embedding.Running
-			runtimeReady = health.Embedding.Ready
-			runtimeError = health.Embedding.LastError
-		}
-		if runtimeError == "" && processState.ModelName == model.Name {
-			runtimeError = processState.LastError
+		runtimePID := 0
+		runtimeMessage := ""
+		orphanDetected := false
+		restartCount := 0
+		restartSuppressed := false
+		if active && roleHealth.ModelName == model.Name {
+			runtimeRunning = roleHealth.Running
+			runtimeReady = roleHealth.Ready
+			runtimeError = roleHealth.LastError
+			runtimePID = roleHealth.PID
+			runtimeMessage = roleHealth.StatusMessage
+			orphanDetected = roleHealth.OrphanDetected
+			restartCount = roleHealth.RestartCount
+			restartSuppressed = roleHealth.RestartSuppressed
 		}
 
 		modelsOut = append(modelsOut, map[string]any{
@@ -69,15 +75,18 @@ func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
 			"runtime_running":    runtimeRunning,
 			"runtime_ready":      runtimeReady,
 			"runtime_error":      runtimeError,
-			"restart_count":      processState.RestartCount,
-			"restart_suppressed": processState.ModelName == model.Name && processState.RestartSuppressed,
+			"runtime_pid":        runtimePID,
+			"runtime_message":    runtimeMessage,
+			"orphan_detected":    orphanDetected,
+			"restart_count":      restartCount,
+			"restart_suppressed": restartSuppressed,
 		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"active": map[string]string{
-			"chat":      current.Active.Chat,
-			"embedding": current.Active.Embedding,
+			"chat":      snapshot.Active.Chat,
+			"embedding": snapshot.Active.Embedding,
 		},
 		"models": modelsOut,
 	})

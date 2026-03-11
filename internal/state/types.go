@@ -30,6 +30,8 @@ type ProcessState struct {
 	LastStartedAt       string `json:"last_started_at,omitempty"`
 	LastExitAt          string `json:"last_exit_at,omitempty"`
 	LastError           string `json:"last_error,omitempty"`
+	StatusMessage       string `json:"status_message,omitempty"`
+	OrphanDetected      bool   `json:"orphan_detected,omitempty"`
 	RestartCount        int    `json:"restart_count,omitempty"`
 	RestartSuppressed   bool   `json:"restart_suppressed,omitempty"`
 	RestartSuppressedAt string `json:"restart_suppressed_at,omitempty"`

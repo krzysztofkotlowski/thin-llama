@@ -7,12 +7,16 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	health := a.runtime.Health()
+	snapshot := a.runtime.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":            health.OK,
-		"runtime_ready": health.RuntimeReady,
-		"chat":          health.Chat,
-		"embedding":     health.Embedding,
+		"ok":            snapshot.OK,
+		"runtime_ready": snapshot.RuntimeReady,
+		"active": map[string]string{
+			"chat":      snapshot.Active.Chat,
+			"embedding": snapshot.Active.Embedding,
+		},
+		"chat":      snapshot.Chat,
+		"embedding": snapshot.Embedding,
 		"runtime": map[string]any{
 			"name":         a.build.RuntimeName(),
 			"version":      a.build.Version,

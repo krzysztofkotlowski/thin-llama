@@ -22,6 +22,7 @@ import (
 )
 
 type stubRuntime struct {
+	snapshot  tlruntime.RuntimeSnapshot
 	health    tlruntime.HealthSnapshot
 	chat      tlruntime.Target
 	chatErr   error
@@ -34,7 +35,28 @@ type stubRuntime struct {
 }
 
 func (s *stubRuntime) Health() tlruntime.HealthSnapshot {
+	if s.snapshot.OK || s.snapshot.Chat.Role != "" || s.snapshot.Embedding.Role != "" {
+		return tlruntime.HealthSnapshot{
+			OK:           s.snapshot.OK,
+			RuntimeReady: s.snapshot.RuntimeReady,
+			Chat:         s.snapshot.Chat,
+			Embedding:    s.snapshot.Embedding,
+		}
+	}
 	return s.health
+}
+
+func (s *stubRuntime) Snapshot() tlruntime.RuntimeSnapshot {
+	if s.snapshot.OK || s.snapshot.Chat.Role != "" || s.snapshot.Embedding.Role != "" {
+		return s.snapshot
+	}
+	return tlruntime.RuntimeSnapshot{
+		OK:           s.health.OK,
+		RuntimeReady: s.health.RuntimeReady,
+		Active:       state.ActiveState{Chat: "qwen2.5:3b", Embedding: "all-minilm"},
+		Chat:         s.health.Chat,
+		Embedding:    s.health.Embedding,
+	}
 }
 
 func (s *stubRuntime) ChatTarget(string) (tlruntime.Target, error) {
@@ -137,9 +159,12 @@ func newHandlerWithAvailability(t *testing.T, rt *stubRuntime, puller stubPuller
 
 func TestHealthReflectsRuntimeReadiness(t *testing.T) {
 	handler := newHandler(t, &stubRuntime{
-		health: tlruntime.HealthSnapshot{
+		snapshot: tlruntime.RuntimeSnapshot{
 			OK:           true,
 			RuntimeReady: false,
+			Active:       state.ActiveState{Chat: "qwen2.5:3b", Embedding: "all-minilm"},
+			Chat:         tlruntime.RoleHealth{Role: "chat"},
+			Embedding:    tlruntime.RoleHealth{Role: "embedding"},
 		},
 	}, stubPuller{})
 
@@ -150,7 +175,7 @@ func TestHealthReflectsRuntimeReadiness(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `"runtime_ready":false`) {
+	if !strings.Contains(rec.Body.String(), `"runtime_ready":false`) || !strings.Contains(rec.Body.String(), `"active":{"chat":"qwen2.5:3b","embedding":"all-minilm"}`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 	var payload map[string]any
@@ -378,7 +403,31 @@ func TestPullReturnsSuccessWhenModelAlreadyPresent(t *testing.T) {
 }
 
 func TestModelsReturnsCatalogStatusAndActiveSelection(t *testing.T) {
-	handler, store, _ := newHandlerWithAvailability(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{}, true, false)
+	handler, store, _ := newHandlerWithAvailability(t, &stubRuntime{
+		snapshot: tlruntime.RuntimeSnapshot{
+			OK:           true,
+			RuntimeReady: false,
+			Active:       state.ActiveState{Chat: "qwen2.5:3b", Embedding: "all-minilm"},
+			Chat: tlruntime.RoleHealth{
+				Role:      "chat",
+				ModelName: "qwen2.5:3b",
+				Port:      11435,
+				PID:       42,
+				Running:   true,
+				Ready:     true,
+			},
+			Embedding: tlruntime.RoleHealth{
+				Role:              "embedding",
+				ModelName:         "all-minilm",
+				Port:              11436,
+				LastError:         "signal: killed",
+				StatusMessage:     "unmanaged/orphaned process detected",
+				OrphanDetected:    true,
+				RestartCount:      2,
+				RestartSuppressed: true,
+			},
+		},
+	}, stubPuller{}, true, false)
 	if _, err := store.Update(func(st *state.State) error {
 		st.Downloads["all-minilm"] = state.DownloadStatus{
 			ModelName: "all-minilm",
@@ -408,6 +457,9 @@ func TestModelsReturnsCatalogStatusAndActiveSelection(t *testing.T) {
 	}
 	if !strings.Contains(body, `"embedding_dims":384`) {
 		t.Fatalf("expected embedding dims in payload: %s", body)
+	}
+	if !strings.Contains(body, `"runtime_message":"unmanaged/orphaned process detected"`) || !strings.Contains(body, `"orphan_detected":true`) {
+		t.Fatalf("expected runtime diagnostics in payload: %s", body)
 	}
 }
 

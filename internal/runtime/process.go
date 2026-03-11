@@ -70,6 +70,15 @@ func (p *ManagedProcess) Start(ctx context.Context) error {
 		return fmt.Errorf("start %s model %s: %w", p.role, p.model.Name, err)
 	}
 
+	p.mu.Lock()
+	p.cmd = cmd
+	p.done = nil
+	p.lastStart = time.Now().UTC()
+	p.ready = false
+	p.stopping = false
+	p.lastErr = ""
+	p.mu.Unlock()
+
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -78,16 +87,14 @@ func (p *ManagedProcess) Start(ctx context.Context) error {
 
 	waitCtx, cancel := context.WithTimeout(ctx, p.startupTimeout)
 	defer cancel()
-	if err := waitForTCP(waitCtx, p.port); err != nil {
+	if err := waitForTCP(waitCtx, p.port, done); err != nil {
 		_ = terminateProcess(cmd, done, 2*time.Second)
 		return fmt.Errorf("wait for %s model %s on port %d: %w", p.role, p.model.Name, p.port, err)
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.cmd = cmd
 	p.done = done
-	p.lastStart = time.Now().UTC()
 	p.ready = true
 	p.stopping = false
 	p.lastErr = ""
@@ -214,12 +221,22 @@ func terminateProcess(cmd *exec.Cmd, done <-chan error, timeout time.Duration) e
 	}
 }
 
-func waitForTCP(ctx context.Context, port int) error {
+func waitForTCP(ctx context.Context, port int, done <-chan error) error {
 	address := fmt.Sprintf("127.0.0.1:%d", port)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
+		if done != nil {
+			select {
+			case err, ok := <-done:
+				if !ok || err == nil {
+					return fmt.Errorf("process exited before listening")
+				}
+				return err
+			default:
+			}
+		}
 		conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()

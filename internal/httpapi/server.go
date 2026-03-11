@@ -20,6 +20,7 @@ import (
 
 type Runtime interface {
 	Health() tlruntime.HealthSnapshot
+	Snapshot() tlruntime.RuntimeSnapshot
 	ChatTarget(requested string) (tlruntime.Target, error)
 	EmbeddingTarget(requested string) (tlruntime.Target, error)
 	SetActiveModels(ctx context.Context, chat string, embedding string) error

@@ -2,9 +2,12 @@ package runtime
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -269,5 +272,167 @@ func TestSupervisorChatTargetLazySwitchesToRequestedDownloadedModel(t *testing.T
 	health := supervisor.Health()
 	if health.Chat.ModelName != "chat-b" || !health.Chat.Ready {
 		t.Fatalf("chat role did not switch to requested model: %+v", health)
+	}
+}
+
+func TestSupervisorSetActiveModelsIsNoOpForReadyModel(t *testing.T) {
+	dir := t.TempDir()
+	chatModel := filepath.Join(dir, "chat.gguf")
+	if err := os.WriteFile(chatModel, []byte("chat"), 0o644); err != nil {
+		t.Fatalf("WriteFile(chat) unexpected error: %v", err)
+	}
+
+	fakeBinary := writeFakeLlamaServer(t, dir)
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       filepath.Join(dir, "state"),
+		ModelsDir:      dir,
+		LlamaServerBin: fakeBinary,
+		Active: config.ActiveModels{
+			Chat: "chat-model",
+		},
+		Models: []config.ModelConfig{
+			{Name: "chat-model", Role: "chat", GGUFPath: chatModel, Port: 12435},
+		},
+	}
+	catalog, err := models.New(cfg)
+	if err != nil {
+		t.Fatalf("models.New() unexpected error: %v", err)
+	}
+
+	supervisor := NewSupervisor(cfg, catalog, state.New(cfg.StateDir))
+	startCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := supervisor.Start(startCtx); err != nil {
+		t.Fatalf("Start() unexpected error: %v", err)
+	}
+	defer func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		_ = supervisor.Stop(stopCtx)
+	}()
+
+	before := supervisor.currentProcess("chat")
+	if before == nil || before.PID() == 0 {
+		t.Fatalf("expected running chat process, got %+v", before)
+	}
+	if err := supervisor.SetActiveModels(context.Background(), "chat-model", ""); err != nil {
+		t.Fatalf("SetActiveModels() unexpected error: %v", err)
+	}
+
+	after := supervisor.currentProcess("chat")
+	if after == nil || after.PID() != before.PID() {
+		t.Fatalf("expected same PID after idempotent activation: before=%d after=%v", before.PID(), after)
+	}
+}
+
+func TestSupervisorConcurrentChatTargetStartsSingleProcess(t *testing.T) {
+	dir := t.TempDir()
+	chatModel := filepath.Join(dir, "chat.gguf")
+	if err := os.WriteFile(chatModel, []byte("chat"), 0o644); err != nil {
+		t.Fatalf("WriteFile(chat) unexpected error: %v", err)
+	}
+
+	fakeBinary := writeFakeLlamaServer(t, dir)
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       filepath.Join(dir, "state"),
+		ModelsDir:      dir,
+		LlamaServerBin: fakeBinary,
+		Active: config.ActiveModels{
+			Chat: "chat-model",
+		},
+		Models: []config.ModelConfig{
+			{Name: "chat-model", Role: "chat", GGUFPath: chatModel, Port: 12435},
+		},
+	}
+	catalog, err := models.New(cfg)
+	if err != nil {
+		t.Fatalf("models.New() unexpected error: %v", err)
+	}
+
+	supervisor := NewSupervisor(cfg, catalog, state.New(cfg.StateDir))
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	targets := make(chan Target, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			target, err := supervisor.ChatTarget("chat-model")
+			if err != nil {
+				errs <- err
+				return
+			}
+			targets <- target
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(targets)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("ChatTarget() unexpected error: %v", err)
+		}
+	}
+
+	proc := supervisor.currentProcess("chat")
+	if proc == nil || proc.PID() == 0 {
+		t.Fatalf("expected one running chat process, got %+v", proc)
+	}
+	for target := range targets {
+		if target.Model.Name != "chat-model" || target.Port != 12435 {
+			t.Fatalf("unexpected target: %+v", target)
+		}
+	}
+}
+
+func TestSupervisorDetectsOrphanedProcessOnRolePort(t *testing.T) {
+	dir := t.TempDir()
+	chatModel := filepath.Join(dir, "chat.gguf")
+	if err := os.WriteFile(chatModel, []byte("chat"), 0o644); err != nil {
+		t.Fatalf("WriteFile(chat) unexpected error: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:12435")
+	if err != nil {
+		t.Fatalf("Listen() unexpected error: %v", err)
+	}
+	defer listener.Close()
+
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       filepath.Join(dir, "state"),
+		ModelsDir:      dir,
+		LlamaServerBin: "/usr/local/bin/llama-server",
+		Active: config.ActiveModels{
+			Chat: "chat-model",
+		},
+		Models: []config.ModelConfig{
+			{Name: "chat-model", Role: "chat", GGUFPath: chatModel, Port: 12435},
+		},
+	}
+	catalog, err := models.New(cfg)
+	if err != nil {
+		t.Fatalf("models.New() unexpected error: %v", err)
+	}
+
+	store := state.New(cfg.StateDir)
+	supervisor := NewSupervisor(cfg, catalog, store)
+	_, err = supervisor.ChatTarget("chat-model")
+	if err == nil {
+		t.Fatal("ChatTarget() expected orphaned-process error")
+	}
+	if got := err.Error(); !strings.Contains(got, "unmanaged/orphaned process detected") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if proc := supervisor.currentProcess("chat"); proc != nil {
+		t.Fatalf("expected no tracked process after orphan detection, got %+v", proc)
+	}
+
+	snapshot := supervisor.Snapshot()
+	if !snapshot.Chat.OrphanDetected || snapshot.Chat.StatusMessage == "" {
+		t.Fatalf("expected orphan diagnostics in snapshot: %+v", snapshot.Chat)
 	}
 }

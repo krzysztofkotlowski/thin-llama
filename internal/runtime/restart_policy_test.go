@@ -52,7 +52,7 @@ func TestRecordExitSuppressesRapidCrashLoop(t *testing.T) {
 
 	supervisor.mu.Lock()
 	supervisor.process["chat"] = proc
-	supervisor.failures["chat"] = restartTracker{Count: rapidFailureLimit - 1, FirstFailure: startedAt}
+	supervisor.failures["chat"] = restartTracker{ModelName: "qwen2.5:3b", Count: rapidFailureLimit - 1, FirstFailure: startedAt}
 	supervisor.mu.Unlock()
 
 	if !supervisor.recordExit("chat", proc, assertErr("signal: killed")) {
