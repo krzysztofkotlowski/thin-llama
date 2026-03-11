@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/krzysztofkotlowski/thin-llama/internal/buildinfo"
 	"github.com/krzysztofkotlowski/thin-llama/internal/config"
 	"github.com/krzysztofkotlowski/thin-llama/internal/metrics"
 	"github.com/krzysztofkotlowski/thin-llama/internal/models"
@@ -127,7 +128,11 @@ func newHandlerWithAvailability(t *testing.T, rt *stubRuntime, puller stubPuller
 		rt = &stubRuntime{}
 	}
 	rt.store = store
-	return NewServer(cfg, catalog, rt, puller, store, metrics.New()), store, cfg
+	return NewServer(cfg, catalog, rt, puller, store, metrics.New(), buildinfo.Info{
+		Version: "v0.1.0",
+		Commit:  "abc123",
+		Date:    "2026-03-11T00:00:00Z",
+	}), store, cfg
 }
 
 func TestHealthReflectsRuntimeReadiness(t *testing.T) {
@@ -147,6 +152,39 @@ func TestHealthReflectsRuntimeReadiness(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"runtime_ready":false`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() unexpected error: %v", err)
+	}
+	runtimeInfo, ok := payload["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing runtime metadata: %v", payload)
+	}
+	if runtimeInfo["name"] != "thin-llama" {
+		t.Fatalf("unexpected runtime metadata: %v", runtimeInfo)
+	}
+}
+
+func TestRuntimeEndpointReturnsIdentityAndCapabilities(t *testing.T) {
+	handler := newHandler(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"runtime":"thin-llama"`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `"version":"v0.1.0"`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `"models.catalog"`) {
+		t.Fatalf("unexpected body: %s", body)
 	}
 }
 
@@ -309,6 +347,32 @@ func TestPullReturnsOllamaLikePayload(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"success"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"pull_state":"downloaded"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestPullReturnsSuccessWhenModelAlreadyPresent(t *testing.T) {
+	handler := newHandler(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{
+		result: &pull.Result{
+			Model:            "all-minilm",
+			Path:             "/models/all-minilm.gguf",
+			Downloaded:       false,
+			ChecksumVerified: true,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pull", strings.NewReader(`{"model":"all-minilm"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"success"`) || !strings.Contains(rec.Body.String(), `"pull_state":"already-present"`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 }

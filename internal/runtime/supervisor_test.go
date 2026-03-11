@@ -215,3 +215,59 @@ func TestSupervisorSetActiveModelsStartsSingleRole(t *testing.T) {
 		t.Fatalf("embedding role unexpectedly started: %+v", health)
 	}
 }
+
+func TestSupervisorChatTargetLazySwitchesToRequestedDownloadedModel(t *testing.T) {
+	dir := t.TempDir()
+	chatA := filepath.Join(dir, "chat-a.gguf")
+	chatB := filepath.Join(dir, "chat-b.gguf")
+	if err := os.WriteFile(chatA, []byte("chat-a"), 0o644); err != nil {
+		t.Fatalf("WriteFile(chat-a) unexpected error: %v", err)
+	}
+	if err := os.WriteFile(chatB, []byte("chat-b"), 0o644); err != nil {
+		t.Fatalf("WriteFile(chat-b) unexpected error: %v", err)
+	}
+
+	fakeBinary := writeFakeLlamaServer(t, dir)
+	cfg := &config.Config{
+		ListenAddr:     ":8080",
+		StateDir:       filepath.Join(dir, "state"),
+		ModelsDir:      dir,
+		LlamaServerBin: fakeBinary,
+		Active: config.ActiveModels{
+			Chat: "chat-a",
+		},
+		Models: []config.ModelConfig{
+			{Name: "chat-a", Role: "chat", GGUFPath: chatA, Port: 12435},
+			{Name: "chat-b", Role: "chat", GGUFPath: chatB, Port: 12437},
+		},
+	}
+	catalog, err := models.New(cfg)
+	if err != nil {
+		t.Fatalf("models.New() unexpected error: %v", err)
+	}
+
+	supervisor := NewSupervisor(cfg, catalog, state.New(cfg.StateDir))
+	startCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := supervisor.Start(startCtx); err != nil {
+		t.Fatalf("Start() unexpected error: %v", err)
+	}
+	defer func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		_ = supervisor.Stop(stopCtx)
+	}()
+
+	target, err := supervisor.ChatTarget("chat-b")
+	if err != nil {
+		t.Fatalf("ChatTarget() unexpected error: %v", err)
+	}
+	if target.Model.Name != "chat-b" {
+		t.Fatalf("ChatTarget().Model.Name = %q, want chat-b", target.Model.Name)
+	}
+
+	health := supervisor.Health()
+	if health.Chat.ModelName != "chat-b" || !health.Chat.Ready {
+		t.Fatalf("chat role did not switch to requested model: %+v", health)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/krzysztofkotlowski/thin-llama/internal/buildinfo"
 	"github.com/krzysztofkotlowski/thin-llama/internal/config"
 	"github.com/krzysztofkotlowski/thin-llama/internal/metrics"
 	"github.com/krzysztofkotlowski/thin-llama/internal/models"
@@ -36,9 +37,10 @@ type App struct {
 	store   *state.Store
 	metrics *metrics.Set
 	client  *http.Client
+	build   buildinfo.Info
 }
 
-func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, puller Puller, store *state.Store, metricSet *metrics.Set) http.Handler {
+func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, puller Puller, store *state.Store, metricSet *metrics.Set, build buildinfo.Info) http.Handler {
 	app := &App{
 		cfg:     cfg,
 		catalog: catalog,
@@ -46,6 +48,7 @@ func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, pul
 		puller:  puller,
 		store:   store,
 		metrics: metricSet,
+		build:   build,
 		client: &http.Client{
 			Timeout: 2 * time.Minute,
 		},
@@ -53,6 +56,7 @@ func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, pul
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.handleHealth)
+	mux.HandleFunc("/api/runtime", app.handleRuntime)
 	mux.HandleFunc("/api/tags", app.handleTags)
 	mux.HandleFunc("/api/models", app.handleModels)
 	mux.HandleFunc("/api/models/active", app.handleActiveModels)

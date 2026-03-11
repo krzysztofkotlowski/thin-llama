@@ -11,19 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/krzysztofkotlowski/thin-llama/internal/buildinfo"
 	"github.com/krzysztofkotlowski/thin-llama/internal/httpapi"
 	"github.com/krzysztofkotlowski/thin-llama/internal/metrics"
 	"github.com/krzysztofkotlowski/thin-llama/internal/pull"
 	tlruntime "github.com/krzysztofkotlowski/thin-llama/internal/runtime"
 )
 
-type BuildInfo struct {
-	Version string
-	Commit  string
-	Date    string
-}
-
-func Run(args []string, build BuildInfo) int {
+func Run(args []string, build buildinfo.Info) int {
 	if len(args) == 0 {
 		printRootUsage(os.Stderr)
 		return 2
@@ -31,7 +26,7 @@ func Run(args []string, build BuildInfo) int {
 
 	switch args[0] {
 	case "serve":
-		return runServe(args[1:])
+		return runServe(args[1:], build)
 	case "pull":
 		return runPull(args[1:])
 	case "use":
@@ -65,7 +60,7 @@ func printRootUsage(w *os.File) {
 	fmt.Fprintln(w, "  thin-llama version")
 }
 
-func runServe(args []string) int {
+func runServe(args []string, build buildinfo.Info) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to config json")
@@ -91,7 +86,7 @@ func runServe(args []string) int {
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.NewServer(cfg, catalog, supervisor, manager, store, metricSet),
+		Handler:           httpapi.NewServer(cfg, catalog, supervisor, manager, store, metricSet, build),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

@@ -12,6 +12,7 @@ The scope is:
 - built-in curated model catalog
 - explicit `pull` then `use` workflow
 - Ollama-compatible chat and embedding endpoints first
+- stable runtime identity and management endpoints for external consumers
 
 It is designed for constrained self-hosted setups where you want lower runtime overhead, direct control over GGUF files, and a container that can boot empty and manage its own models.
 
@@ -20,6 +21,7 @@ It is designed for constrained self-hosted setups where you want lower runtime o
 Ollama-compatible endpoints:
 
 - `GET /health`
+- `GET /api/runtime`
 - `GET /api/tags`
 - `POST /api/chat`
 - `POST /api/embed`
@@ -31,7 +33,7 @@ thin-llama management endpoints:
 - `POST /api/models/active`
 - `GET /metrics`
 
-`/api/tags` returns only models that are already available locally. `/api/models` exposes the full merged catalog plus active/download status.
+`/api/runtime` identifies the runtime, build version, Git ref, and supported capabilities. `/api/tags` returns only models that are already available locally. `/api/models` exposes the full merged catalog plus active/download status.
 
 ## Architecture
 
@@ -195,6 +197,7 @@ Check the empty boot state:
 
 ```bash
 curl -s http://localhost:8080/health
+curl -s http://localhost:8080/api/runtime
 curl -s http://localhost:8080/api/models
 curl -s http://localhost:8080/api/tags
 ```

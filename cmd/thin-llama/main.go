@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/krzysztofkotlowski/thin-llama/internal/buildinfo"
 	"github.com/krzysztofkotlowski/thin-llama/internal/cli"
 )
 
@@ -13,7 +14,7 @@ var (
 )
 
 func main() {
-	os.Exit(cli.Run(os.Args[1:], cli.BuildInfo{
+	os.Exit(cli.Run(os.Args[1:], buildinfo.Info{
 		Version: version,
 		Commit:  commit,
 		Date:    date,

@@ -34,13 +34,15 @@ func (a *App) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := "success"
+	pullState := "downloaded"
 	if !result.Downloaded {
-		status = "already-present"
+		pullState = "already-present"
 	}
-	a.metrics.ModelPulls.WithLabelValues(modelName, status).Inc()
+	a.metrics.ModelPulls.WithLabelValues(modelName, pullState).Inc()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":            status,
+		"status":            "success",
+		"pull_state":        pullState,
+		"downloaded":        result.Downloaded,
 		"model":             result.Model,
 		"path":              result.Path,
 		"checksum_verified": result.ChecksumVerified,

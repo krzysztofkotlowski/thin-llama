@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
 FROM ghcr.io/ggml-org/llama.cpp:server AS llama
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tini && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/thin-llama /usr/local/bin/thin-llama
 COPY --from=llama /app/llama-server /usr/local/bin/llama-server

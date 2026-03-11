@@ -327,21 +327,38 @@ func (s *Supervisor) targetForRole(role, requested string) (Target, error) {
 		return Target{}, err
 	}
 
+	requested = strings.TrimSpace(requested)
 	activeName := current.Active.Embedding
 	if role == "chat" {
 		activeName = current.Active.Chat
 	}
 	activeName = strings.TrimSpace(activeName)
-	if activeName == "" {
+
+	targetName := activeName
+	if requested != "" {
+		targetName = requested
+	}
+	if targetName == "" {
 		return Target{}, fmt.Errorf("no active %s model selected", role)
 	}
-	if requested != "" && requested != activeName {
-		return Target{}, fmt.Errorf("model %q is configured but not active for role %q", requested, role)
+
+	if err := validateRoleSelection(s.cfg, s.catalog, role, targetName); err != nil {
+		return Target{}, err
 	}
 
 	s.mu.RLock()
 	proc := s.process[role]
 	s.mu.RUnlock()
+	if proc == nil || !proc.Ready() || proc.Model().Name != targetName {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := s.switchRole(ctx, role, targetName); err != nil {
+			return Target{}, err
+		}
+		s.mu.RLock()
+		proc = s.process[role]
+		s.mu.RUnlock()
+	}
 	if proc == nil || !proc.Ready() {
 		return Target{}, fmt.Errorf("%s runtime is not ready", role)
 	}
