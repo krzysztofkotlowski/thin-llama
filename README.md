@@ -1,3 +1,5 @@
+![thin-llama banner](assets/thin-llama-banner.png)
+
 # thin-llama
 
 `thin-llama` is a lightweight Go wrapper around `llama.cpp` `llama-server` built for small machines that do not need the full Ollama runtime. It runs one active chat model and one active embedding model, manages them as subprocesses, and exposes a minimal Ollama-compatible API surface for existing apps.
