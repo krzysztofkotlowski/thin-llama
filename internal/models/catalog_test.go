@@ -80,6 +80,9 @@ func TestNewLoadsBuiltInCatalogWithoutExplicitModels(t *testing.T) {
 	if _, ok := catalog.Get("all-minilm"); !ok {
 		t.Fatal("expected built-in embedding model all-minilm")
 	}
+	if _, ok := catalog.Get("nomic-embed-text"); !ok {
+		t.Fatal("expected built-in embedding model nomic-embed-text")
+	}
 	if _, ok := catalog.Get("bge-base-en:v1.5"); !ok {
 		t.Fatal("expected built-in embedding model bge-base-en:v1.5")
 	}
@@ -115,15 +118,18 @@ func TestBuiltInCatalogUsesHomeServerMaxDefaults(t *testing.T) {
 		t.Fatalf("expected qwen2.5:7b batch/ubatch=64, got %v", chat.ExtraArgs)
 	}
 
-	embed, ok := catalog.Get("bge-base-en:v1.5")
+	embed, ok := catalog.Get("nomic-embed-text")
 	if !ok {
-		t.Fatal("expected built-in bge-base-en:v1.5 model")
+		t.Fatal("expected built-in nomic-embed-text model")
 	}
 	if embed.EmbeddingDims != 768 {
 		t.Fatalf("embed.EmbeddingDims = %d, want 768", embed.EmbeddingDims)
 	}
 	if embed.Threads != 3 {
 		t.Fatalf("embed.Threads = %d, want 3", embed.Threads)
+	}
+	if embed.ContextSize != 2048 {
+		t.Fatalf("embed.ContextSize = %d, want 2048", embed.ContextSize)
 	}
 
 	if containsArg(chat.ExtraArgs, "--no-cache-prompt") || containsArg(embed.ExtraArgs, "--no-cache-prompt") {
@@ -133,19 +139,13 @@ func TestBuiltInCatalogUsesHomeServerMaxDefaults(t *testing.T) {
 		t.Fatalf("expected qwen2.5:7b cache-ram=0, got %v", chat.ExtraArgs)
 	}
 	if !hasArgValue(embed.ExtraArgs, "--cache-ram", "0") {
-		t.Fatalf("expected bge-base-en:v1.5 cache-ram=0, got %v", embed.ExtraArgs)
+		t.Fatalf("expected nomic-embed-text cache-ram=0, got %v", embed.ExtraArgs)
 	}
-	if !hasArgValue(embed.ExtraArgs, "--flash-attn", "off") {
-		t.Fatalf("expected bge-base-en:v1.5 flash-attn=off, got %v", embed.ExtraArgs)
+	if !hasArgValue(embed.ExtraArgs, "--threads-batch", "4") {
+		t.Fatalf("expected nomic-embed-text threads-batch=4, got %v", embed.ExtraArgs)
 	}
-	if !hasArgValue(embed.ExtraArgs, "--pooling", "cls") {
-		t.Fatalf("expected bge-base-en:v1.5 pooling=cls, got %v", embed.ExtraArgs)
-	}
-	if !hasArgValue(embed.ExtraArgs, "--threads-batch", "3") {
-		t.Fatalf("expected bge-base-en:v1.5 threads-batch=3, got %v", embed.ExtraArgs)
-	}
-	if !hasArgValue(embed.ExtraArgs, "--batch-size", "24") || !hasArgValue(embed.ExtraArgs, "--ubatch-size", "24") {
-		t.Fatalf("expected bge-base-en:v1.5 batch/ubatch=24, got %v", embed.ExtraArgs)
+	if !hasArgValue(embed.ExtraArgs, "--batch-size", "2048") || !hasArgValue(embed.ExtraArgs, "--ubatch-size", "2048") {
+		t.Fatalf("expected nomic-embed-text batch/ubatch=2048, got %v", embed.ExtraArgs)
 	}
 }
 
@@ -162,7 +162,7 @@ func TestBuiltInEmbeddingProfilesKeepBatchWithinUBatch(t *testing.T) {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
 
-	for _, name := range []string{"all-minilm", "bge-base-en:v1.5"} {
+	for _, name := range []string{"all-minilm", "bge-base-en:v1.5", "nomic-embed-text"} {
 		model, ok := catalog.Get(name)
 		if !ok {
 			t.Fatalf("expected built-in embedding model %s", name)

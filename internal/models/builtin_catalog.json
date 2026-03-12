@@ -58,6 +58,35 @@
     "port": 11435
   },
   {
+    "name": "nomic-embed-text",
+    "role": "embedding",
+    "gguf_path": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+    "source_url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=true",
+    "embedding_dims": 768,
+    "threads": 3,
+    "context_size": 2048,
+    "gpu_layers": 0,
+    "extra_args": [
+      "--host",
+      "127.0.0.1",
+      "--parallel",
+      "1",
+      "--threads-http",
+      "1",
+      "--threads-batch",
+      "4",
+      "--cache-ram",
+      "0",
+      "--no-warmup",
+      "--no-cont-batching",
+      "--batch-size",
+      "2048",
+      "--ubatch-size",
+      "2048"
+    ],
+    "port": 11436
+  },
+  {
     "name": "bge-base-en:v1.5",
     "role": "embedding",
     "gguf_path": "bge-base-en-v1.5-q4_k_m.gguf",

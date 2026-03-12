@@ -6,7 +6,7 @@
   "startup_timeout_seconds": 60,
   "active": {
     "chat": "qwen2.5:7b",
-    "embedding": "bge-base-en:v1.5"
+    "embedding": "nomic-embed-text"
   },
   "models": []
 }
