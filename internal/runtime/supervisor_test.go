@@ -352,6 +352,11 @@ func TestSupervisorConcurrentChatTargetStartsSingleProcess(t *testing.T) {
 	}
 
 	supervisor := NewSupervisor(cfg, catalog, state.New(cfg.StateDir))
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = supervisor.Stop(stopCtx)
+	}()
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	targets := make(chan Target, 2)
@@ -395,11 +400,12 @@ func TestSupervisorDetectsOrphanedProcessOnRolePort(t *testing.T) {
 		t.Fatalf("WriteFile(chat) unexpected error: %v", err)
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:12435")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() unexpected error: %v", err)
 	}
 	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
 
 	cfg := &config.Config{
 		ListenAddr:     ":8080",
@@ -410,7 +416,7 @@ func TestSupervisorDetectsOrphanedProcessOnRolePort(t *testing.T) {
 			Chat: "chat-model",
 		},
 		Models: []config.ModelConfig{
-			{Name: "chat-model", Role: "chat", GGUFPath: chatModel, Port: 12435},
+			{Name: "chat-model", Role: "chat", GGUFPath: chatModel, Port: port},
 		},
 	}
 	catalog, err := models.New(cfg)

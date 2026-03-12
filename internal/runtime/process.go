@@ -62,7 +62,9 @@ func (p *ManagedProcess) Start(ctx context.Context) error {
 	}
 	args = append(args, p.model.ExtraArgs...)
 
-	cmd := exec.CommandContext(ctx, p.binary, args...)
+	// The startup context is only for readiness waiting. The managed process
+	// must outlive the request/startup timeout that triggered it.
+	cmd := exec.Command(p.binary, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

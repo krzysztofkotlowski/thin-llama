@@ -5,8 +5,8 @@
   "llama_server_bin": "/usr/local/bin/llama-server",
   "startup_timeout_seconds": 60,
   "active": {
-    "chat": "qwen2.5:3b",
-    "embedding": "all-minilm"
+    "chat": "qwen2.5:7b",
+    "embedding": "bge-base-en:v1.5"
   },
   "models": []
 }

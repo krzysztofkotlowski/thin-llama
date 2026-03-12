@@ -51,17 +51,19 @@ flowchart LR
 
 The image ships with a small curated catalog for low-resource machines. The current defaults are:
 
-- `qwen2.5:3b` for chat
-- `all-minilm` for embeddings
+- `qwen2.5:7b` for chat
+- `bge-base-en:v1.5` for embeddings
 
 The binary embeds this catalog and merges user overrides from [`config.local.json`](/Users/krzysztofkotlowski/Desktop/thin-llama/config.local.json) by model name.
 
 Current built-in defaults:
 
-| Model        | Role        | File                              | Notes                            |
-| ------------ | ----------- | --------------------------------- | -------------------------------- |
-| `qwen2.5:3b` | `chat`      | `qwen2.5-3b-instruct-q4_k_m.gguf` | small-machine default chat model |
-| `all-minilm` | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf`    | `384`-dim embedding default      |
+| Model               | Role        | File                               | Notes                                  |
+| ------------------- | ----------- | ---------------------------------- | -------------------------------------- |
+| `qwen2.5:7b`        | `chat`      | `qwen2.5-7b-instruct-q4_k_m.gguf`  | balanced home-server default chat      |
+| `qwen2.5:3b`        | `chat`      | `qwen2.5-3b-instruct-q4_k_m.gguf`  | smaller fallback chat model            |
+| `bge-base-en:v1.5`  | `embedding` | `bge-base-en-v1.5-q4_k_m.gguf`     | `768`-dim embedding default            |
+| `all-minilm`        | `embedding` | `all-minilm-l6-v2-q4_k_m.gguf`     | `384`-dim fallback embedding model     |
 
 The built-in runtime profile is intentionally conservative for small CPU-only hosts:
 
@@ -159,8 +161,8 @@ Direct CLI usage:
 ```bash
 go run ./cmd/thin-llama serve --config ./config.local.json
 go run ./cmd/thin-llama models --config ./config.local.json
-go run ./cmd/thin-llama pull --config ./config.local.json --model all-minilm
-go run ./cmd/thin-llama use --config ./config.local.json --embedding all-minilm
+go run ./cmd/thin-llama pull --config ./config.local.json --model bge-base-en:v1.5
+go run ./cmd/thin-llama use --config ./config.local.json --embedding bge-base-en:v1.5
 ```
 
 List catalog models and current state:
@@ -172,13 +174,13 @@ go run ./cmd/thin-llama models --config ./config.local.json
 Pull a built-in model:
 
 ```bash
-go run ./cmd/thin-llama pull --config ./config.local.json --model all-minilm
+go run ./cmd/thin-llama pull --config ./config.local.json --model bge-base-en:v1.5
 ```
 
 Activate pulled models:
 
 ```bash
-go run ./cmd/thin-llama use --config ./config.local.json --chat qwen2.5:3b --embedding all-minilm
+go run ./cmd/thin-llama use --config ./config.local.json --chat qwen2.5:7b --embedding bge-base-en:v1.5
 ```
 
 ## Docker quickstart
@@ -228,15 +230,15 @@ Then pull and activate models through the API:
 ```bash
 curl -s http://localhost:8080/api/pull \
   -H 'Content-Type: application/json' \
-  -d '{"model":"all-minilm"}'
+  -d '{"model":"bge-base-en:v1.5"}'
 
 curl -s http://localhost:8080/api/pull \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen2.5:3b"}'
+  -d '{"model":"qwen2.5:7b"}'
 
 curl -s http://localhost:8080/api/models/active \
   -H 'Content-Type: application/json' \
-  -d '{"chat":"qwen2.5:3b","embedding":"all-minilm"}'
+  -d '{"chat":"qwen2.5:7b","embedding":"bge-base-en:v1.5"}'
 ```
 
 After that, the Ollama-compatible endpoints are ready:
@@ -246,19 +248,19 @@ curl -s http://localhost:8080/api/tags
 
 curl -s http://localhost:8080/api/embed \
   -H 'Content-Type: application/json' \
-  -d '{"model":"all-minilm","input":["golang","vector search"]}'
+  -d '{"model":"bge-base-en:v1.5","input":["golang","vector search"]}'
 
 curl -s http://localhost:8080/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen2.5:3b","stream":false,"messages":[{"role":"user","content":"Reply with exactly: thin-llama ok"}]}'
+  -d '{"model":"qwen2.5:7b","stream":false,"messages":[{"role":"user","content":"Reply with exactly: thin-llama ok"}]}'
 ```
 
 You can also manage models through the CLI inside the running container:
 
 ```bash
 docker exec thin-llama thin-llama models --config /app/config.local.json
-docker exec thin-llama thin-llama pull --config /app/config.local.json --model all-minilm
-docker exec thin-llama thin-llama use --config /app/config.local.json --embedding all-minilm
+docker exec thin-llama thin-llama pull --config /app/config.local.json --model bge-base-en:v1.5
+docker exec thin-llama thin-llama use --config /app/config.local.json --embedding bge-base-en:v1.5
 ```
 
 Build the image directly:
