@@ -85,7 +85,7 @@ func TestNewLoadsBuiltInCatalogWithoutExplicitModels(t *testing.T) {
 	}
 }
 
-func TestBuiltInCatalogUsesConservativeHomeServerDefaults(t *testing.T) {
+func TestBuiltInCatalogUsesHomeServerMaxDefaults(t *testing.T) {
 	cfg := &config.Config{
 		ListenAddr:     ":8080",
 		StateDir:       "/state",
@@ -102,11 +102,17 @@ func TestBuiltInCatalogUsesConservativeHomeServerDefaults(t *testing.T) {
 	if !ok {
 		t.Fatal("expected built-in qwen2.5:7b model")
 	}
-	if chat.ContextSize != 512 {
-		t.Fatalf("chat.ContextSize = %d, want 512", chat.ContextSize)
+	if chat.Threads != 5 {
+		t.Fatalf("chat.Threads = %d, want 5", chat.Threads)
 	}
-	if !hasArgValue(chat.ExtraArgs, "--batch-size", "32") || !hasArgValue(chat.ExtraArgs, "--ubatch-size", "32") {
-		t.Fatalf("expected qwen2.5:7b batch/ubatch=32, got %v", chat.ExtraArgs)
+	if chat.ContextSize != 1024 {
+		t.Fatalf("chat.ContextSize = %d, want 1024", chat.ContextSize)
+	}
+	if !hasArgValue(chat.ExtraArgs, "--threads-batch", "4") {
+		t.Fatalf("expected qwen2.5:7b threads-batch=4, got %v", chat.ExtraArgs)
+	}
+	if !hasArgValue(chat.ExtraArgs, "--batch-size", "64") || !hasArgValue(chat.ExtraArgs, "--ubatch-size", "64") {
+		t.Fatalf("expected qwen2.5:7b batch/ubatch=64, got %v", chat.ExtraArgs)
 	}
 
 	embed, ok := catalog.Get("bge-base-en:v1.5")
@@ -115,6 +121,9 @@ func TestBuiltInCatalogUsesConservativeHomeServerDefaults(t *testing.T) {
 	}
 	if embed.EmbeddingDims != 768 {
 		t.Fatalf("embed.EmbeddingDims = %d, want 768", embed.EmbeddingDims)
+	}
+	if embed.Threads != 3 {
+		t.Fatalf("embed.Threads = %d, want 3", embed.Threads)
 	}
 
 	if containsArg(chat.ExtraArgs, "--no-cache-prompt") || containsArg(embed.ExtraArgs, "--no-cache-prompt") {
@@ -132,8 +141,11 @@ func TestBuiltInCatalogUsesConservativeHomeServerDefaults(t *testing.T) {
 	if !hasArgValue(embed.ExtraArgs, "--pooling", "cls") {
 		t.Fatalf("expected bge-base-en:v1.5 pooling=cls, got %v", embed.ExtraArgs)
 	}
-	if !hasArgValue(embed.ExtraArgs, "--batch-size", "16") || !hasArgValue(embed.ExtraArgs, "--ubatch-size", "16") {
-		t.Fatalf("expected bge-base-en:v1.5 batch/ubatch=16, got %v", embed.ExtraArgs)
+	if !hasArgValue(embed.ExtraArgs, "--threads-batch", "3") {
+		t.Fatalf("expected bge-base-en:v1.5 threads-batch=3, got %v", embed.ExtraArgs)
+	}
+	if !hasArgValue(embed.ExtraArgs, "--batch-size", "24") || !hasArgValue(embed.ExtraArgs, "--ubatch-size", "24") {
+		t.Fatalf("expected bge-base-en:v1.5 batch/ubatch=24, got %v", embed.ExtraArgs)
 	}
 }
 
