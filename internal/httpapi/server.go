@@ -28,6 +28,7 @@ type Runtime interface {
 
 type Puller interface {
 	PullModel(ctx context.Context, modelName string) (*pull.Result, error)
+	PullModelAsync(modelName string) error
 }
 
 type App struct {
@@ -70,9 +71,16 @@ func NewServer(cfg *config.Config, catalog *models.Catalog, runtime Runtime, pul
 
 func (a *App) withMetrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		a.metrics.HTTPRequests.WithLabelValues(r.Method, r.URL.Path, http.StatusText(rec.status)).Inc()
+		dur := time.Since(start).Seconds()
+		path := r.URL.Path
+		if path == "" {
+			path = "/"
+		}
+		a.metrics.HTTPRequests.WithLabelValues(r.Method, path, http.StatusText(rec.status)).Inc()
+		a.metrics.HTTPRequestDur.WithLabelValues(r.Method, path).Observe(dur)
 	})
 }
 

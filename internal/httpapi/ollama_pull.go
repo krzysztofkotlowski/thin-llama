@@ -7,7 +7,8 @@ import (
 )
 
 type ollamaPullRequest struct {
-	Model string `json:"model"`
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
 }
 
 func (a *App) handlePull(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +25,21 @@ func (a *App) handlePull(w http.ResponseWriter, r *http.Request) {
 	modelName := strings.TrimSpace(request.Model)
 	if modelName == "" {
 		writeError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+
+	if request.Stream {
+		if err := a.puller.PullModelAsync(modelName); err != nil {
+			a.metrics.ModelPulls.WithLabelValues(modelName, "error").Inc()
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		a.metrics.ModelPulls.WithLabelValues(modelName, "started").Inc()
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":  "started",
+			"model":   modelName,
+			"message": "Download started in background. Poll GET /api/models for download_status.",
+		})
 		return
 	}
 

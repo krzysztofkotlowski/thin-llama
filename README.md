@@ -60,6 +60,16 @@ curl -s http://localhost:8080/api/models/active \
   -d '{"chat":"qwen2.5:7b","embedding":"nomic-embed-text"}'
 ```
 
+Start a background pull and poll status:
+
+```bash
+curl -s http://localhost:8080/api/pull \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:7b","stream":true}'
+
+curl -s http://localhost:8080/api/models
+```
+
 ### Local Binary
 
 Requirements:
@@ -79,6 +89,7 @@ go run ./cmd/thin-llama serve --config ./config.local.json
 - **Catalog-first model discovery:** built-in catalog from `internal/models/builtin_catalog.json`, then merged with `models[]` overrides by model name.
 - **Explicit lifecycle:** models are downloaded via `pull`; activation is done via `use` or `POST /api/models/active`.
 - **Boot-empty friendly:** control plane starts even when no models are downloaded.
+- **Resumable downloads:** partial `.download` files are resumed with HTTP `Range` requests when the source supports it.
 - **Persistent state:** active selection and process/download state are stored in `/state/state.json` (or `state_dir`).
 
 ## CLI Reference
@@ -123,7 +134,7 @@ Notes:
 | `POST` | `/api/models/active` | Switch active chat and/or embedding model |
 | `POST` | `/api/chat` | Ollama-style chat request, proxied to `/v1/chat/completions` |
 | `POST` | `/api/embed` | Ollama-style embeddings request, proxied to `/v1/embeddings` |
-| `POST` | `/api/pull` | Download model from configured source URL |
+| `POST` | `/api/pull` | Download model from configured source URL, optionally async with `stream: true` |
 | `GET` | `/metrics` | Prometheus metrics |
 
 ### Compatibility Notes
@@ -131,6 +142,8 @@ Notes:
 - Chat and embeddings endpoints are Ollama-style, with translation to upstream OpenAI-compatible `llama-server` routes.
 - Streaming chat output is returned as `application/x-ndjson` chunks.
 - Chat option mapping currently supports `temperature` and `num_predict`/`max_tokens`.
+- `POST /api/pull` returns `202 Accepted` when `stream: true` starts a background download.
+- Poll `GET /api/models` and inspect each model's `download_status` (`downloading`, `downloaded`, `available`, `error`) after async pull starts.
 - `/api/tags` intentionally hides models not present on disk.
 
 ### Minimal API Examples
@@ -223,12 +236,14 @@ Operational checks:
 - `GET /api/models` for model availability, active state, runtime PID, restart/orphan status
 - `GET /metrics` for Prometheus counters:
   - `thin_llama_http_requests_total`
+  - `thin_llama_http_request_duration_seconds`
   - `thin_llama_model_pulls_total`
   - `thin_llama_proxy_failures_total`
 
 Common issues:
 
 - **`model ... is not downloaded`**: call `POST /api/pull` or `thin-llama pull`.
+- **async pull appears stuck**: check `GET /api/models` and inspect `download_status`, `download_error`, and whether the source server supports `Range` for resumed downloads.
 - **`no active ... model selected`**: set active models with `use` or `POST /api/models/active`.
 - **`unmanaged/orphaned process detected`**: conflicting process already owns the runtime port; restart and clear the conflict.
 - **upstream `502` from `/api/chat` or `/api/embed`**: target `llama-server` process is not healthy or reachable.
@@ -266,6 +281,6 @@ Deploy behind a trusted network boundary (private LAN/VPN and/or reverse proxy w
 Known functional limits in v1:
 
 - one supervised process per role (`chat`, `embedding`)
-- synchronous model pull flow
+- one pull worker per model name inside a single process
 - partial Ollama compatibility focused on chat/embeddings/pull/tags
 - restart suppression after repeated rapid failures

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krzysztofkotlowski/thin-llama/internal/config"
@@ -24,17 +25,20 @@ type Result struct {
 }
 
 type Manager struct {
-	cfg     *config.Config
-	catalog *models.Catalog
-	store   *state.Store
-	client  *http.Client
+	cfg       *config.Config
+	catalog   *models.Catalog
+	store     *state.Store
+	client    *http.Client
+	asyncMu   sync.Mutex
+	asyncPull map[string]bool
 }
 
 func NewManager(cfg *config.Config, catalog *models.Catalog, store *state.Store) *Manager {
 	return &Manager{
-		cfg:     cfg,
-		catalog: catalog,
-		store:   store,
+		cfg:       cfg,
+		catalog:   catalog,
+		store:     store,
+		asyncPull: make(map[string]bool),
 		client: &http.Client{
 			Timeout: 30 * time.Minute,
 		},
@@ -140,32 +144,59 @@ func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, err
 		return nil, err
 	}
 
+	tempPath := path + ".download"
+	var file *os.File
+	var startOffset int64
+	if fi, err := os.Stat(tempPath); err == nil && fi.Size() > 0 {
+		file, err = os.OpenFile(tempPath, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err == nil {
+			startOffset = fi.Size()
+		}
+	}
+	if file == nil {
+		var err error
+		file, err = os.Create(tempPath)
+		if err != nil {
+			wrapped := fmt.Errorf("create temp model file: %w", err)
+			m.markDownloadError(model, path, wrapped)
+			return nil, wrapped
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
 		wrapped := fmt.Errorf("create download request: %w", err)
 		m.markDownloadError(model, path, wrapped)
 		return nil, wrapped
 	}
+	if startOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startOffset))
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
+		_ = file.Close()
 		wrapped := fmt.Errorf("download model: %w", err)
 		m.markDownloadError(model, path, wrapped)
 		return nil, wrapped
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if startOffset > 0 && resp.StatusCode != http.StatusPartialContent {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		wrapped := fmt.Errorf("download model: server does not support Range requests (got %s)", resp.Status)
+		m.markDownloadError(model, path, wrapped)
+		return nil, wrapped
+	}
+	if startOffset == 0 && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
 		wrapped := fmt.Errorf("download model: unexpected status %s", resp.Status)
 		m.markDownloadError(model, path, wrapped)
 		return nil, wrapped
 	}
 
-	tempPath := path + ".download"
-	file, err := os.Create(tempPath)
-	if err != nil {
-		wrapped := fmt.Errorf("create temp model file: %w", err)
-		m.markDownloadError(model, path, wrapped)
-		return nil, wrapped
-	}
 	if _, err := io.Copy(file, resp.Body); err != nil {
 		_ = file.Close()
 		_ = os.Remove(tempPath)
@@ -219,6 +250,35 @@ func (m *Manager) PullModel(ctx context.Context, modelName string) (*Result, err
 		Downloaded:       true,
 		ChecksumVerified: strings.TrimSpace(model.SHA256) != "",
 	}, nil
+}
+
+// PullModelAsync starts a background download and returns immediately.
+// Idempotent: if a pull for the same model is already in progress, returns nil.
+// Poll GET /api/models to check download_status until "available", "downloaded", or "error".
+func (m *Manager) PullModelAsync(modelName string) error {
+	_, err := m.catalog.Require(modelName)
+	if err != nil {
+		return err
+	}
+
+	m.asyncMu.Lock()
+	if m.asyncPull[modelName] {
+		m.asyncMu.Unlock()
+		return nil
+	}
+	m.asyncPull[modelName] = true
+	m.asyncMu.Unlock()
+
+	go func() {
+		defer func() {
+			m.asyncMu.Lock()
+			delete(m.asyncPull, modelName)
+			m.asyncMu.Unlock()
+		}()
+		ctx := context.Background()
+		_, _ = m.PullModel(ctx, modelName)
+	}()
+	return nil
 }
 
 func sanitizeModelName(name string) string {

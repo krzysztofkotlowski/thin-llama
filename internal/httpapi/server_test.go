@@ -97,6 +97,10 @@ func (s stubPuller) PullModel(context.Context, string) (*pull.Result, error) {
 	return s.result, s.err
 }
 
+func (s stubPuller) PullModelAsync(string) error {
+	return nil
+}
+
 func newTestConfig(dir string) *config.Config {
 	return &config.Config{
 		ListenAddr:     ":8080",
@@ -399,6 +403,26 @@ func TestPullReturnsSuccessWhenModelAlreadyPresent(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"success"`) || !strings.Contains(rec.Body.String(), `"pull_state":"already-present"`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestPullAsyncReturns202WhenStreamTrue(t *testing.T) {
+	handler := newHandler(t, &stubRuntime{health: tlruntime.HealthSnapshot{OK: true}}, stubPuller{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pull", strings.NewReader(`{"model":"all-minilm","stream":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d want 202, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"status":"started"`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `"model":"all-minilm"`) {
+		t.Fatalf("unexpected body: %s", body)
 	}
 }
 

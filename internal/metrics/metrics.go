@@ -8,10 +8,11 @@ import (
 )
 
 type Set struct {
-	Registry      *prometheus.Registry
-	HTTPRequests  *prometheus.CounterVec
-	ModelPulls    *prometheus.CounterVec
-	ProxyFailures *prometheus.CounterVec
+	Registry         *prometheus.Registry
+	HTTPRequests     *prometheus.CounterVec
+	HTTPRequestDur   *prometheus.HistogramVec
+	ModelPulls       *prometheus.CounterVec
+	ProxyFailures    *prometheus.CounterVec
 }
 
 func New() *Set {
@@ -24,6 +25,14 @@ func New() *Set {
 				Help: "HTTP requests handled by thin-llama.",
 			},
 			[]string{"method", "path", "status"},
+		),
+		HTTPRequestDur: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "thin_llama_http_request_duration_seconds",
+				Help:    "HTTP request latency in seconds.",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"method", "path"},
 		),
 		ModelPulls: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -40,7 +49,7 @@ func New() *Set {
 			[]string{"route"},
 		),
 	}
-	registry.MustRegister(set.HTTPRequests, set.ModelPulls, set.ProxyFailures)
+	registry.MustRegister(set.HTTPRequests, set.HTTPRequestDur, set.ModelPulls, set.ProxyFailures)
 	return set
 }
 
